@@ -60,6 +60,16 @@
         <canvas id="helpCanvas" class="help-visual" width="720" height="420" aria-label="ゲーム画面の見本"></canvas>
         <p>4分30秒以内に、崩壊する終末都市で無人配送ドローンを操作し、依頼をこなして帰還地点へ戻る配達ローグライトです。</p>
         <p>通常ランでは開始時に配送区域と区域状況が決まります。短時間で高報酬の区域、長めで救助を狙いやすい区域など、条件を見て方針を変えてください。</p>
+        <div class="event-list">
+          <strong>区域状況</strong>
+          <ul>
+            <li>通常区域: 270秒の標準的なランです。</li>
+            <li>緊急封鎖区域: 230〜240秒の短時間ランです。配達報酬が20%上がります。</li>
+            <li>長距離配送区域: 300〜310秒の広域ランです。配送先が遠めで、報酬も少し高めです。</li>
+            <li>救助優先区域: 300秒の救助向けランです。生存者信号と回収妨害が増えます。</li>
+            <li>崩壊進行区域: 250秒の危険ランです。イベント発生が早く、獲得資材が20%上がります。</li>
+          </ul>
+        </div>
         <p>黄色の受取地点で荷物を受け取り、緑の目的地へ届けると報酬が入ります。通常配送は通常荷物、医療品、データ端末の3種類です。</p>
         <p>依頼には特殊な荷物もあります。壊れ物は損傷を受けると報酬が下がり、冷却品は時間経過で価値が低下します。重量貨物は高報酬ですが積載2枠を使い、移動速度が大きく低下します。</p>
         <p>どの依頼を受けるかによって、安全ルートを選ぶか、最短ルートを狙うか、早めに帰還するかの判断が変わります。</p>
@@ -129,6 +139,7 @@
         <div><span>配達</span><strong id="hudDeliveries">0</strong></div>
         <div><span>HP</span><strong id="hudHp">0</strong></div>
         <div><span>積載</span><strong id="hudCargo">0/0</strong></div>
+        <div><span>状況</span><strong id="hudAreaStatus">通常</strong></div>
       </div>
       <div id="canvasWrap" class="canvas-wrap">
         <canvas id="gameCanvas" width="390" height="610"></canvas>
