@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <title>灰街メッセンジャー</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="app">
+    <section id="titleScreen" class="screen active" aria-labelledby="gameTitle">
+      <div class="title-block">
+        <p class="eyebrow">終末都市配達ローグライト</p>
+        <h1 id="gameTitle">灰街メッセンジャー</h1>
+        <p id="titleSaveSummary" class="save-summary"></p>
+        <div id="titleNotices" class="notice-list"></div>
+      </div>
+      <div class="menu-grid">
+        <button id="startButton" class="primary-button">スタート</button>
+        <button id="bonusButton">廃棄区画回収</button>
+        <button id="baseButton">灰街拠点</button>
+        <button id="helpButton">遊び方</button>
+        <button id="recordsButton">記録</button>
+        <button id="debugButton" class="subtle-button">調整</button>
+      </div>
+    </section>
+
+    <section id="vehicleScreen" class="screen" aria-labelledby="vehicleTitle">
+      <div class="screen-header">
+        <button class="back-button" data-back-title>戻る</button>
+        <h2 id="vehicleTitle">機体選択</h2>
+      </div>
+      <p id="vehicleModeNote" class="resource-line"></p>
+      <div id="vehicleList" class="card-list"></div>
+      <div class="vehicle-action-bar">
+        <span id="selectedVehicleLabel">機体未選択</span>
+        <button id="vehicleSortieButton" class="primary-button">出動</button>
+      </div>
+    </section>
+
+    <section id="baseScreen" class="screen" aria-labelledby="baseTitle">
+      <div class="screen-header">
+        <button class="back-button" data-back-title>戻る</button>
+        <h2 id="baseTitle">灰街拠点</h2>
+      </div>
+      <p id="baseMaterial" class="resource-line"></p>
+      <div id="bonusPassPanel" class="facility-card"></div>
+      <div id="facilityList" class="card-list"></div>
+      <h3 class="section-title">人員一覧</h3>
+      <p id="personnelSummary" class="resource-line"></p>
+      <div id="personnelList" class="card-list"></div>
+    </section>
+
+    <section id="helpScreen" class="screen" aria-labelledby="helpTitle">
+      <div class="screen-header">
+        <button class="back-button" data-back-title>戻る</button>
+        <h2 id="helpTitle">遊び方</h2>
+      </div>
+      <div class="text-panel">
+        <canvas id="helpCanvas" class="help-visual" width="720" height="420" aria-label="ゲーム画面の見本"></canvas>
+        <p>4分30秒以内に、崩壊する終末都市で無人配送ドローンを操作し、依頼をこなして帰還地点へ戻る配達ローグライトです。</p>
+        <p>通常ランでは開始時に配送区域と区域状況が決まります。短時間で高報酬の区域、長めで救助を狙いやすい区域など、条件を見て方針を変えてください。</p>
+        <p>黄色の受取地点で荷物を受け取り、緑の目的地へ届けると報酬が入ります。通常配送は通常荷物、医療品、データ端末の3種類です。</p>
+        <p>依頼には特殊な荷物もあります。壊れ物は損傷を受けると報酬が下がり、冷却品は時間経過で価値が低下します。重量貨物は高報酬ですが積載2枠を使い、移動速度が大きく低下します。</p>
+        <p>どの依頼を受けるかによって、安全ルートを選ぶか、最短ルートを狙うか、早めに帰還するかの判断が変わります。</p>
+        <p>ピンクの生存者信号を見つけたら、近くに留まるとリフト回収が始まります。保護中の生存者は積載枠を使い、帰還成功時のみ灰街拠点の人員として加入します。</p>
+        <p>積載枠を超える荷物は受け取れません。生存者は1枠、重量貨物は2枠を使います。余裕がある時だけ追加で抱えると、帰還前の「あと1件」を狙いやすくなります。</p>
+        <p>赤い危険区域は継続損傷、赤い妨害ユニットは接触ショックを与えます。各機体のパルスで妨害ユニットを無力化できますが、報酬は得られません。</p>
+        <p>灰街には、配送を妨害する自律ユニットが危険イベントや特殊状況でのみ出現します。無力化する目的は、配送・リフト回収・帰還のルートを安全にすることです。</p>
+        <p>紫の強化地点ではラン中強化を1つ選べます。白い修理地点はHPを回復します。使える地点は一度きりです。</p>
+        <p>残り60秒になると青い帰還地点が強調表示されます。帰還できれば満額報酬とボーナス、失敗すると今回の報酬は半分です。</p>
+        <p>灰街拠点では資材50で廃棄区画パスを購入できます。パスを1枚消費すると、90秒間の「廃棄区画回収」に出撃できます。</p>
+        <p>廃棄区画回収では配送依頼は出ません。資材箱と支援物資を拾い、危険区域や妨害ユニットを避けて帰還地点へ戻る短時間の寄り道ステージです。</p>
+        <p>スマホでは画面を押した場所に疑似スティックが表示されます。スティックを倒して機体を操作し、下部ボタンでパルスとスキルを使います。</p>
+        <p>PCではWASDまたは矢印キーで移動、左クリックまたはJでパルス、Spaceでスキルを発動します。ゲームパッドでは左スティックまたは十字キーで移動、A/R2でパルス、B/L2でスキルです。</p>
+        <p>灰街拠点では資材を使って整備工場、配達局、管制塔、医療区画、通信設備、解析室、倉庫を強化できます。人員を配置すると次回以降のランが有利になります。</p>
+        <div class="event-list">
+          <strong>危険イベント</strong>
+          <ul>
+            <li>道路崩落: ランダムな位置に危険区域が追加されます。</li>
+            <li>停電: 数秒間、視界が狭くなります。</li>
+            <li>突風: 数秒間、操作に慣性が加わります。</li>
+            <li>追跡妨害機: 接触ショックを与える妨害ユニットが少数出現します。</li>
+            <li>緊急依頼: 高報酬の依頼が一時的に出現します。</li>
+            <li>封鎖予告: 予告された区域が数秒後に危険区域へ変化し、警備ドローンが巡回することがあります。</li>
+            <li>生存者信号: リフト回収できる生存者が出現し、回収妨害機が反応することがあります。</li>
+            <li>通信障害: 目的地や帰還地点の信号が一時的に見えづらくなり、ジャマーが出ることがあります。</li>
+            <li>火災延焼: 小さな火災が時間経過で広がります。</li>
+            <li>支援物資落下: 短時間だけ回収できるボーナス物資が出現し、回収時に追跡妨害機が反応することがあります。</li>
+            <li>カーゴハッカー: 所持金や配送データを狙う妨害ユニットが出現します。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="recordsScreen" class="screen" aria-labelledby="recordsTitle">
+      <div class="screen-header">
+        <button class="back-button" data-back-title>戻る</button>
+        <h2 id="recordsTitle">記録</h2>
+      </div>
+      <div id="recordsPanel" class="text-panel"></div>
+    </section>
+
+    <section id="debugScreen" class="screen" aria-labelledby="debugTitle">
+      <div class="screen-header">
+        <button class="back-button" data-back-title>戻る</button>
+        <h2 id="debugTitle">開発用調整</h2>
+      </div>
+      <div id="debugPanel" class="text-panel debug-panel"></div>
+    </section>
+
+    <section id="resultScreen" class="screen" aria-labelledby="resultTitle">
+      <div class="screen-header result-header">
+        <h2 id="resultTitle">リザルト</h2>
+      </div>
+      <div id="resultPanel" class="result-panel"></div>
+      <div class="menu-grid compact">
+        <button id="retryButton" class="primary-button">同じ機体で再挑戦</button>
+        <button id="selectVehicleButton">機体を選ぶ</button>
+        <button id="resultBaseButton">灰街拠点へ</button>
+        <button id="resultTitleButton">タイトルへ</button>
+      </div>
+    </section>
+
+    <section id="gameScreen" class="game-shell" hidden aria-label="ゲーム画面">
+      <div class="hud">
+        <div><span>時間</span><strong id="hudTime">04:30</strong></div>
+        <div><span>所持金</span><strong id="hudMoney">0</strong></div>
+        <div><span>配達</span><strong id="hudDeliveries">0</strong></div>
+        <div><span>HP</span><strong id="hudHp">0</strong></div>
+        <div><span>積載</span><strong id="hudCargo">0/0</strong></div>
+      </div>
+      <div id="canvasWrap" class="canvas-wrap">
+        <canvas id="gameCanvas" width="390" height="610"></canvas>
+        <div id="virtualStick" class="virtual-stick" hidden aria-hidden="true">
+          <div id="virtualStickKnob" class="virtual-stick-knob"></div>
+        </div>
+        <div id="eventToast" class="event-toast" aria-live="polite"></div>
+        <div id="floatingPrompt" class="floating-prompt" aria-live="polite"></div>
+      </div>
+      <div class="bottom-panel">
+        <div id="jobPanel" class="job-panel"></div>
+        <div class="action-row">
+          <button id="attackButton">パルス</button>
+          <button id="skillButton" class="primary-button">スキル</button>
+          <button id="returnButton">帰還地点</button>
+        </div>
+      </div>
+    </section>
+
+    <div id="upgradeOverlay" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="upgradeTitle">
+      <div class="modal-panel">
+        <h2 id="upgradeTitle">ラン中強化</h2>
+        <p>1つ選ぶと走行を再開します。</p>
+        <div id="upgradeChoices" class="choice-list"></div>
+      </div>
+    </div>
+  </main>
+  <script src="main.js" defer></script>
+</body>
+</html>
