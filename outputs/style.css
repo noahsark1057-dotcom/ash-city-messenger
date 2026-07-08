@@ -668,7 +668,7 @@ h2 {
 
 .hud {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 1px;
   padding-top: env(safe-area-inset-top);
   background: #07090b;
@@ -693,8 +693,13 @@ h2 {
   display: block;
   margin-top: 3px;
   color: #fff;
-  font-size: clamp(0.82rem, 3.4vw, 1.02rem);
+  font-size: clamp(0.76rem, 3vw, 1.02rem);
   line-height: 1.1;
+}
+
+#hudAreaStatus {
+  font-size: clamp(0.66rem, 2.55vw, 0.9rem);
+  white-space: nowrap;
 }
 
 .canvas-wrap {
