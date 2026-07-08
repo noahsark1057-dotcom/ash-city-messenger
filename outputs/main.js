@@ -570,6 +570,7 @@
     hudDeliveries: $("#hudDeliveries"),
     hudHp: $("#hudHp"),
     hudCargo: $("#hudCargo"),
+    hudAreaStatus: $("#hudAreaStatus"),
     jobPanel: $("#jobPanel"),
     attackButton: $("#attackButton"),
     skillButton: $("#skillButton"),
@@ -2599,6 +2600,18 @@
     return Math.max(120, getRunDuration() + deltaFromStandard);
   }
 
+  function getAreaStatusHudLabel(state) {
+    if (!state || state.runMode === "bonus") return "廃棄";
+    const labels = {
+      normal: "通常",
+      emergencyLockdown: "緊急封鎖",
+      longHaul: "長距離",
+      rescuePriority: "救助優先",
+      collapseProgress: "崩壊進行"
+    };
+    return labels[state.areaStatus?.key] || "通常";
+  }
+
   function normalizeVehicleId(id) {
     if (id === "bike") return "alpha";
     if (id === "truck") return "beta";
@@ -4119,6 +4132,7 @@
       : String(state.deliveries);
     dom.hudHp.textContent = `${Math.ceil(player.hp)}/${player.maxHp}`;
     dom.hudCargo.textContent = state.runMode === "bonus" ? `資材${state.bonusMaterials}` : `${usedCapacity}/${player.capacity}`;
+    dom.hudAreaStatus.textContent = getAreaStatusHudLabel(state);
 
     const panelLines = [];
     if (state.runMode === "bonus") {
