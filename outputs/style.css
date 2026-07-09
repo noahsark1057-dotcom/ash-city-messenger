@@ -239,6 +239,28 @@ h2 {
   box-shadow: 0 0 0 1px rgba(72, 214, 238, 0.18), 0 0 24px rgba(72, 214, 238, 0.1);
 }
 
+.choice-card.experimental {
+  border-color: rgba(255, 143, 216, 0.72);
+  background: linear-gradient(135deg, rgba(255, 143, 216, 0.13), rgba(17, 22, 27, 0.98) 42%);
+  box-shadow: 0 0 0 1px rgba(255, 143, 216, 0.12), 0 0 24px rgba(255, 143, 216, 0.1);
+}
+
+.choice-meta {
+  width: fit-content;
+  padding: 2px 7px;
+  border: 1px solid rgba(72, 214, 238, 0.25);
+  border-radius: 999px;
+  color: #b5fbff;
+  font-size: 0.76rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.choice-card.experimental .choice-meta {
+  border-color: rgba(255, 143, 216, 0.5);
+  color: #ffd4f2;
+}
+
 .vehicle-card-head {
   display: grid;
   grid-template-columns: 74px 1fr;
@@ -422,6 +444,11 @@ h2 {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #11161b;
+}
+
+.experimental-callout {
+  border-color: rgba(255, 143, 216, 0.48);
+  background: rgba(255, 143, 216, 0.08);
 }
 
 .event-list {

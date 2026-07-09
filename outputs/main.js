@@ -136,16 +136,16 @@
     medical: {
       key: "medical",
       name: "医療品",
-      reward: 180,
+      reward: 210,
       color: "#ff9f6e",
       speedPenalty: 0.96,
-      timeLimit: 70,
+      timeLimit: 56,
       cargoSlots: 1
     },
     data: {
       key: "data",
       name: "データ端末",
-      reward: 80,
+      reward: 95,
       color: "#77d8ff",
       speedPenalty: 1,
       timeLimit: 0,
@@ -394,8 +394,8 @@
     {
       key: "medical",
       name: "医療区画",
-      effect: "修理地点の回復量が上がる",
-      detail: level => level === 0 ? "回復補正なし" : `修理回復 +${level * 6}`
+      effect: "強化ステーションの修理量が上がる",
+      detail: level => level === 0 ? "回復補正なし" : `修理回復 +${level * 8}`
     },
     {
       key: "comms",
@@ -406,8 +406,8 @@
     {
       key: "analysis",
       name: "解析室",
-      effect: "ラン中強化の候補が良くなりやすい",
-      detail: level => level === 0 ? "解析補正なし" : `強化候補 +${level}`
+      effect: "強化ステーション数と改造候補が良くなる",
+      detail: level => level === 0 ? "強化ステーション 1基" : `強化ステーション ${Math.min(3, 1 + level)}基 / 上位型候補補正`
     },
     {
       key: "warehouse",
@@ -431,9 +431,9 @@
     { key: "mechanic", name: "整備士", facility: "garage", effect: "ドローン最大HP上昇" },
     { key: "logistics", name: "物流係", facility: "depot", effect: "配送報酬上昇" },
     { key: "controller", name: "管制士", facility: "control", effect: "危険イベントの予告時間延長" },
-    { key: "medic", name: "医療士", facility: "medical", effect: "修理地点の回復量上昇" },
+    { key: "medic", name: "医療士", facility: "medical", effect: "強化ステーション修理量上昇" },
     { key: "operator", name: "通信士", facility: "comms", effect: "通信障害の効果時間短縮" },
-    { key: "analyst", name: "解析員", facility: "analysis", effect: "ラン中強化の候補改善" },
+    { key: "analyst", name: "解析員", facility: "analysis", effect: "改造候補の上位型出現率上昇" },
     { key: "quartermaster", name: "倉庫番", facility: "warehouse", effect: "積載ボーナス発生率上昇" },
     { key: "scout", name: "偵察員", facility: "control", effect: "依頼地点・危険区域の表示範囲上昇" }
   ];
@@ -454,70 +454,317 @@
     "風間サク", "遠野メイ", "神代ルイ", "久遠アヤ", "真壁ジン"
   ];
 
+  const UPGRADE_BUILD_TYPES = {
+    delivery: { name: "高速配送型", color: "#48d6ee" },
+    cargo: { name: "積載輸送型", color: "#f2d45c" },
+    hazard: { name: "危険突破型", color: "#ff8d5c" },
+    combat: { name: "妨害制圧型", color: "#bf7cff" },
+    rescue: { name: "救助特化型", color: "#ff8fd8" }
+  };
+
+  const UPGRADE_TIER_LABELS = {
+    1: "Ⅰ型",
+    2: "Ⅱ型",
+    3: "Ⅲ型",
+    4: "Ⅳ型",
+    5: "Ⅴ型"
+  };
+
+  const UPGRADE_TIER_WEIGHTS = [
+    { key: 1, weight: 45 },
+    { key: 2, weight: 30 },
+    { key: 3, weight: 18 },
+    { key: 4, weight: 6 },
+    { key: 5, weight: 1 }
+  ];
+
   const UPGRADE_POOL = [
     {
       key: "lightFrame",
       name: "軽量フレーム",
-      text: "速度+10%",
-      apply: state => {
-        state.player.speedBonus *= 1.1;
+      family: "delivery",
+      tags: ["delivery", "mobility"],
+      tierText: {
+        1: "速度+8%",
+        2: "速度+12%",
+        3: "速度+18%",
+        4: "速度+22%、空荷時さらに速度+10%",
+        5: "速度+24%、納品後5秒間加速し危険区域損傷を無効。ただし最大HP-15"
+      },
+      apply: (state, tier) => {
+        const speed = { 1: 1.08, 2: 1.12, 3: 1.18, 4: 1.22, 5: 1.24 }[tier];
+        state.player.speedBonus *= speed;
+        if (tier >= 4) state.player.emptySpeedBonus *= tier === 5 ? 1.12 : 1.1;
+        if (tier === 5) {
+          changeMaxHp(state.player, -15);
+          state.player.postDeliverySpeedMultiplier = Math.max(state.player.postDeliverySpeedMultiplier, 1.22);
+          state.player.postDeliverySpeedDuration = Math.max(state.player.postDeliverySpeedDuration, 5);
+          state.player.postDeliveryHazardImmunityDuration = Math.max(state.player.postDeliveryHazardImmunityDuration, 5);
+        }
       }
     },
     {
       key: "armor",
       name: "補強装甲",
-      text: "最大HP+20、現在HPも20回復",
-      apply: state => {
-        state.player.maxHp += 20;
-        state.player.heal(20);
+      family: "hazard",
+      tags: ["hazard", "defense"],
+      tierText: {
+        1: "最大HP+15",
+        2: "最大HP+25",
+        3: "最大HP+35、現在HPも少し回復",
+        4: "最大HP+45、被弾後2.5秒間ダメージ軽減",
+        5: "最大HP+45、HP0になる損傷を1回だけ耐える。ただし速度-6%"
+      },
+      apply: (state, tier) => {
+        const hp = { 1: 15, 2: 25, 3: 35, 4: 45, 5: 45 }[tier];
+        changeMaxHp(state.player, hp, tier >= 3 ? Math.round(hp * 0.45) : 0);
+        if (tier >= 4) {
+          state.player.damageGuardDuration = Math.max(state.player.damageGuardDuration, 2.5);
+          state.player.damageGuardMultiplier = Math.min(state.player.damageGuardMultiplier, tier === 5 ? 0.55 : 0.65);
+        }
+        if (tier === 5) {
+          state.player.deathSaveCharges += 1;
+          state.player.speedBonus *= 0.94;
+        }
       }
     },
     {
-      key: "bag",
-      name: "追加バッグ",
-      text: "積載枠+1",
-      apply: state => {
-        state.player.capacity += 1;
+      key: "container",
+      name: "追加コンテナ",
+      family: "cargo",
+      tags: ["cargo"],
+      tierText: {
+        1: "積載枠+1",
+        2: "積載枠+1、重量貨物の速度低下を軽減",
+        3: "積載枠+2",
+        4: "積載枠+2、複数荷物所持中は報酬上昇",
+        5: "積載上限を超えて1枠だけ緊急積載可能。ただし超過中は速度大幅低下"
+      },
+      apply: (state, tier) => {
+        state.player.capacity += tier >= 5 ? 2 : tier >= 3 ? 2 : 1;
+        if (tier >= 2) state.player.heavyPenaltyMultiplier *= tier >= 4 ? 0.55 : 0.72;
+        if (tier >= 4) state.multiCargoRewardMultiplier = Math.max(state.multiCargoRewardMultiplier, tier === 5 ? 1.18 : 1.12);
+        if (tier === 5) state.emergencyCargoCapacity = Math.max(state.emergencyCargoCapacity, 1);
       }
     },
     {
       key: "repairKit",
       name: "緊急修理キット",
-      text: "HPを30回復",
-      apply: state => {
-        state.player.heal(30);
+      family: "rescue",
+      tags: ["rescue", "defense"],
+      tierText: {
+        1: "HPを25回復",
+        2: "HPを35回復",
+        3: "HPを45回復、最大HP+10",
+        4: "HPを60回復、リフト回収中断を1回防ぐ",
+        5: "HP全回復、リフト回収中断を2回防ぐ。ただし速度-5%"
+      },
+      apply: (state, tier) => {
+        if (tier >= 3) changeMaxHp(state.player, tier === 5 ? 20 : 10, 0);
+        if (tier === 5) state.player.heal(state.player.maxHp);
+        else state.player.heal({ 1: 25, 2: 35, 3: 45, 4: 60 }[tier]);
+        if (tier >= 4) state.liftInterruptShield += tier === 5 ? 2 : 1;
+        if (tier === 5) state.player.speedBonus *= 0.95;
       }
     },
     {
       key: "hazardAi",
       name: "危険予測AI",
-      text: "危険区域の損傷を35%軽減",
-      apply: state => {
-        state.player.hazardDamageMultiplier *= 0.65;
+      family: "hazard",
+      tags: ["hazard", "mobility"],
+      tierText: {
+        1: "危険区域損傷-15%",
+        2: "危険区域損傷-25%",
+        3: "危険区域損傷-35%",
+        4: "危険区域損傷-40%、危険区域を出た後に短時間加速",
+        5: "危険区域突入直後だけ短時間損傷無効、区域内速度上昇。ただし最大HP-10"
+      },
+      apply: (state, tier) => {
+        const damage = { 1: 0.85, 2: 0.75, 3: 0.65, 4: 0.6, 5: 0.4 }[tier];
+        state.player.hazardDamageMultiplier *= damage;
+        if (tier >= 4) state.player.hazardExitSpeedMultiplier = Math.max(state.player.hazardExitSpeedMultiplier, tier === 5 ? 1.28 : 1.18);
+        if (tier === 5) {
+          state.player.hazardSpeedBonus *= 1.22;
+          state.player.hazardEntryImmunityDuration = Math.max(state.player.hazardEntryImmunityDuration, 2.4);
+          changeMaxHp(state.player, -10);
+        }
       }
     },
     {
       key: "motor",
       name: "高性能モーター",
-      text: "加速力アップ",
-      apply: state => {
-        state.player.accelBonus *= 1.25;
+      family: "delivery",
+      tags: ["delivery", "mobility"],
+      tierText: {
+        1: "加速力+15%",
+        2: "加速力+25%",
+        3: "加速力+35%、速度+5%",
+        4: "加速力+45%、配達後3秒加速",
+        5: "加速力+65%、速度+12%。ただし危険区域損傷+8%"
+      },
+      apply: (state, tier) => {
+        state.player.accelBonus *= { 1: 1.15, 2: 1.25, 3: 1.35, 4: 1.45, 5: 1.65 }[tier];
+        if (tier >= 3) state.player.speedBonus *= tier === 5 ? 1.12 : 1.05;
+        if (tier >= 4) {
+          state.player.postDeliverySpeedMultiplier = Math.max(state.player.postDeliverySpeedMultiplier, tier === 5 ? 1.26 : 1.16);
+          state.player.postDeliverySpeedDuration = Math.max(state.player.postDeliverySpeedDuration, tier === 5 ? 5 : 3);
+        }
+        if (tier === 5) state.player.hazardDamageMultiplier *= 1.08;
       }
     },
     {
       key: "negotiation",
       name: "報酬交渉術",
-      text: "配達報酬+20%",
-      apply: state => {
-        state.rewardMultiplier *= 1.2;
+      family: "cargo",
+      tags: ["delivery", "cargo"],
+      tierText: {
+        1: "配達報酬+10%",
+        2: "配達報酬+18%",
+        3: "配達報酬+25%",
+        4: "配達報酬+30%、緊急依頼報酬をさらに上げる",
+        5: "配達報酬+45%。ただし帰還失敗時の損失増加"
+      },
+      apply: (state, tier) => {
+        state.rewardMultiplier *= { 1: 1.1, 2: 1.18, 3: 1.25, 4: 1.3, 5: 1.45 }[tier];
+        if (tier >= 4) state.urgentRewardMultiplier = Math.max(state.urgentRewardMultiplier, tier === 5 ? 1.22 : 1.12);
+        if (tier === 5) state.failedReturnKeepRate = Math.min(state.failedReturnKeepRate, 0.35);
       }
     },
     {
       key: "cooling",
       name: "冷却システム",
-      text: "スキルクールタイム15%短縮",
-      apply: state => {
-        state.player.cooldownMultiplier *= 0.85;
+      family: "combat",
+      tags: ["combat", "cooldown"],
+      tierText: {
+        1: "スキルクールタイム-8%",
+        2: "スキルクールタイム-15%",
+        3: "スキルクールタイム-22%",
+        4: "スキルクールタイム-28%、パルス命中でさらに短縮",
+        5: "実験型冷却炉。スキル冷却-38%、パルス命中短縮大。ただし最大HP-8"
+      },
+      apply: (state, tier) => {
+        state.player.cooldownMultiplier *= { 1: 0.92, 2: 0.85, 3: 0.78, 4: 0.72, 5: 0.62 }[tier];
+        if (tier >= 4) state.pulseSkillCooldownReduction += tier === 5 ? 1.2 : 0.45;
+        if (tier === 5) changeMaxHp(state.player, -8);
+      }
+    },
+    {
+      key: "pulseAmplifier",
+      name: "パルス増幅器",
+      family: "combat",
+      tags: ["combat"],
+      tierText: {
+        1: "パルス出力+10%",
+        2: "パルス出力+18%",
+        3: "パルス出力+25%、到達距離+10%",
+        4: "パルス命中時、スキルクールタイムを短縮",
+        5: "命中時に小爆発。ただしパルスクールタイム+20%"
+      },
+      apply: (state, tier) => {
+        state.player.attackDamageBonus *= { 1: 1.1, 2: 1.18, 3: 1.25, 4: 1.3, 5: 1.42 }[tier];
+        if (tier >= 3) state.player.attackRangeBonus *= tier === 5 ? 1.18 : 1.1;
+        if (tier >= 4) state.pulseSkillCooldownReduction += tier === 5 ? 1.0 : 0.7;
+        if (tier === 5) {
+          state.pulseExplosionRadius = Math.max(state.pulseExplosionRadius, 62);
+          state.pulseExplosionDamage = Math.max(state.pulseExplosionDamage, 12);
+          state.player.attackCooldownMultiplier *= 1.2;
+        }
+      }
+    },
+    {
+      key: "deliveryChain",
+      name: "連続納品ボーナス",
+      family: "delivery",
+      tags: ["delivery", "mobility"],
+      tierText: {
+        1: "配達後24秒以内の次配達報酬+15%",
+        2: "配達後30秒以内の次配達報酬+22%",
+        3: "配達後30秒以内の次配達報酬+30%",
+        4: "配達後35秒以内の次配達報酬+38%",
+        5: "連続納品報酬+55%、配達後加速。ただし帰還失敗時の損失増加"
+      },
+      apply: (state, tier) => {
+        state.deliveryChainDuration = Math.max(state.deliveryChainDuration, { 1: 24, 2: 30, 3: 30, 4: 35, 5: 40 }[tier]);
+        state.deliveryChainRewardMultiplier = Math.max(state.deliveryChainRewardMultiplier, { 1: 1.15, 2: 1.22, 3: 1.3, 4: 1.38, 5: 1.55 }[tier]);
+        if (tier === 5) {
+          state.player.postDeliverySpeedMultiplier = Math.max(state.player.postDeliverySpeedMultiplier, 1.22);
+          state.player.postDeliverySpeedDuration = Math.max(state.player.postDeliverySpeedDuration, 5);
+          state.failedReturnKeepRate = Math.min(state.failedReturnKeepRate, 0.4);
+        }
+      }
+    },
+    {
+      key: "pollutedRoute",
+      name: "汚染航路適応",
+      family: "hazard",
+      tags: ["hazard", "mobility"],
+      tierText: {
+        1: "危険区域内で速度+12%、損傷+4%",
+        2: "危険区域内で速度+18%、損傷+5%",
+        3: "危険区域内で速度+25%、損傷+6%",
+        4: "危険区域内で速度+30%、出た後も短時間加速。損傷+6%",
+        5: "禁制航路制御。危険区域内速度+42%、損傷+12%"
+      },
+      apply: (state, tier) => {
+        state.player.hazardSpeedBonus *= { 1: 1.12, 2: 1.18, 3: 1.25, 4: 1.3, 5: 1.42 }[tier];
+        state.player.hazardDamageMultiplier *= { 1: 1.04, 2: 1.05, 3: 1.06, 4: 1.06, 5: 1.12 }[tier];
+        if (tier >= 4) state.player.hazardExitSpeedMultiplier = Math.max(state.player.hazardExitSpeedMultiplier, tier === 5 ? 1.25 : 1.16);
+      }
+    },
+    {
+      key: "coolingReflux",
+      name: "冷却還流",
+      family: "combat",
+      tags: ["combat", "cooldown"],
+      tierText: {
+        1: "パルス命中時スキル冷却-0.4秒",
+        2: "パルス命中時スキル冷却-0.7秒",
+        3: "パルス命中時スキル冷却-1秒",
+        4: "パルス命中時スキル冷却-1.4秒、撃破後加速",
+        5: "旧軍用還流器。命中時冷却-2秒。ただしパルスクールタイム+12%"
+      },
+      apply: (state, tier) => {
+        state.pulseSkillCooldownReduction += { 1: 0.4, 2: 0.7, 3: 1, 4: 1.4, 5: 2 }[tier];
+        if (tier >= 4) state.player.disableBoostMultiplier = Math.max(state.player.disableBoostMultiplier, tier === 5 ? 1.28 : 1.2);
+        if (tier === 5) state.player.attackCooldownMultiplier *= 1.12;
+      }
+    },
+    {
+      key: "liftSpeed",
+      name: "リフト高速化",
+      family: "rescue",
+      tags: ["rescue"],
+      tierText: {
+        1: "リフト回収時間-10%",
+        2: "リフト回収時間-18%",
+        3: "リフト回収時間-30%",
+        4: "リフト回収時間-38%、保護中の速度低下を軽減",
+        5: "未承認リフト巻上機。回収時間-50%、保護中軽快。ただし最大HP-8"
+      },
+      apply: (state, tier) => {
+        state.liftDurationMultiplier *= { 1: 0.9, 2: 0.82, 3: 0.7, 4: 0.62, 5: 0.5 }[tier];
+        if (tier >= 4) state.protectedSurvivorSpeedBonus += tier === 5 ? 0.08 : 0.05;
+        if (tier === 5) changeMaxHp(state.player, -8);
+      }
+    },
+    {
+      key: "liftField",
+      name: "回収防護フィールド",
+      family: "rescue",
+      tags: ["rescue", "defense"],
+      tierText: {
+        1: "リフト回収中断を1回防ぐ",
+        2: "中断を1回防ぎ、回収時間-8%",
+        3: "中断を1回防ぎ、保護中の速度低下を軽減",
+        4: "中断を2回防ぎ、回収中の移動低下を少し軽減",
+        5: "試作防護フィールド。中断を2回防ぐ。ただしパルスクールタイム+10%"
+      },
+      apply: (state, tier) => {
+        state.liftInterruptShield += tier >= 4 ? 2 : 1;
+        if (tier >= 2) state.liftDurationMultiplier *= 0.92;
+        if (tier >= 3) state.protectedSurvivorSpeedBonus += tier === 5 ? 0.07 : 0.04;
+        if (tier >= 4) state.player.liftMoveMultiplier = Math.max(state.player.liftMoveMultiplier, tier === 5 ? 0.34 : 0.28);
+        if (tier === 5) state.player.attackCooldownMultiplier *= 1.1;
       }
     }
   ];
@@ -576,6 +823,8 @@
     skillButton: $("#skillButton"),
     returnButton: $("#returnButton"),
     upgradeOverlay: $("#upgradeOverlay"),
+    upgradeTitle: $("#upgradeTitle"),
+    upgradeIntro: $("#upgradeIntro"),
     upgradeChoices: $("#upgradeChoices")
   };
 
@@ -845,8 +1094,27 @@
       this.tempSpeedMultiplier = 1;
       this.speedBonus = 1;
       this.accelBonus = 1;
+      this.emptySpeedBonus = 1;
+      this.hazardSpeedBonus = 1;
+      this.hazardExitSpeedMultiplier = 1;
+      this.hazardEntryImmunityDuration = 0;
+      this.hazardEntryImmunityTimer = 0;
+      this.postDeliverySpeedMultiplier = 1;
+      this.postDeliverySpeedDuration = 0;
+      this.postDeliverySpeedTimer = 0;
+      this.postDeliveryHazardImmunityDuration = 0;
+      this.postDeliveryHazardImmunityTimer = 0;
+      this.disableBoostMultiplier = 1;
+      this.disableBoostTimer = 0;
+      this.heavyPenaltyMultiplier = 1;
+      this.liftMoveMultiplier = 0.18;
       this.hazardDamageMultiplier = 1;
       this.cooldownMultiplier = 1;
+      this.attackCooldownMultiplier = 1;
+      this.damageGuardDuration = 0;
+      this.damageGuardMultiplier = 1;
+      this.damageGuardTimer = 0;
+      this.deathSaveCharges = 0;
       const controlLevel = save.facilities.control || 0;
       this.attackDamageBonus = 1 + controlLevel * 0.15;
       this.attackRangeBonus = 1 + controlLevel * 0.12;
@@ -860,13 +1128,23 @@
     getSpeedMultiplier(state) {
       let mult = this.speedBonus;
       if (this.tempSpeedTimer > 0) mult *= this.tempSpeedMultiplier;
-      for (const job of this.getCargo(state)) {
-        mult *= job.type.speedPenalty;
+      if (this.postDeliverySpeedTimer > 0) mult *= this.postDeliverySpeedMultiplier;
+      if (this.disableBoostTimer > 0) mult *= this.disableBoostMultiplier;
+      const cargo = this.getCargo(state);
+      if (cargo.length === 0 && state.protectedSurvivors.length === 0) mult *= this.emptySpeedBonus;
+      if (state.isPlayerInDangerZone()) mult *= this.hazardSpeedBonus;
+      for (const job of cargo) {
+        if (job.type.special === "heavy") {
+          mult *= 1 - (1 - job.type.speedPenalty) * this.heavyPenaltyMultiplier;
+        } else {
+          mult *= job.type.speedPenalty;
+        }
       }
       if (state.protectedSurvivors.length > 0) {
         mult *= Math.pow(state.getProtectedSurvivorSpeedMultiplier(), state.protectedSurvivors.length);
       }
-      if (state.liftProgress) mult *= 0.18;
+      if (state.getUsedCapacity() > this.capacity) mult *= 0.68;
+      if (state.liftProgress) mult *= this.liftMoveMultiplier;
       if (this.vehicleId === "alpha" && this.skillActive > 0) mult *= 1.75;
       return mult;
     }
@@ -875,6 +1153,7 @@
       let mult = 1;
       if (this.vehicleId === "beta" && this.skillActive > 0) mult *= 0.25;
       if (kind === "hazard") {
+        if (this.hazardEntryImmunityTimer > 0 || this.postDeliveryHazardImmunityTimer > 0) return 0;
         if (this.vehicleId === "gamma") mult *= 0.75;
         if (this.vehicleId === "gamma" && this.skillActive > 0) mult = 0;
         mult *= this.hazardDamageMultiplier;
@@ -887,6 +1166,11 @@
       this.skillActive = Math.max(0, this.skillActive - dt);
       this.attackCooldown = Math.max(0, this.attackCooldown - dt);
       this.tempSpeedTimer = Math.max(0, this.tempSpeedTimer - dt);
+      this.postDeliverySpeedTimer = Math.max(0, this.postDeliverySpeedTimer - dt);
+      this.postDeliveryHazardImmunityTimer = Math.max(0, this.postDeliveryHazardImmunityTimer - dt);
+      this.disableBoostTimer = Math.max(0, this.disableBoostTimer - dt);
+      this.damageGuardTimer = Math.max(0, this.damageGuardTimer - dt);
+      this.hazardEntryImmunityTimer = Math.max(0, this.hazardEntryImmunityTimer - dt);
 
       const move = input.getVector();
       if (move.x !== 0 || move.y !== 0) {
@@ -898,7 +1182,7 @@
       let targetVy = move.y * maxSpeed;
       let accel = 8.5 * this.accelBonus;
       if (this.getCargo(state).some(job => job.type.special === "heavy")) {
-        accel *= 0.82;
+        accel *= 1 - (1 - 0.82) * this.heavyPenaltyMultiplier;
       }
 
       if (state.windTimer > 0) {
@@ -941,7 +1225,7 @@
     attack(state) {
       if (this.attackCooldown > 0) return false;
       const heavyCooldown = this.getCargo(state).some(job => job.type.special === "heavy") ? 1.12 : 1;
-      this.attackCooldown = this.vehicle.attackCooldown * heavyCooldown;
+      this.attackCooldown = this.vehicle.attackCooldown * heavyCooldown * this.attackCooldownMultiplier;
       state.runLog.pulseUsed += 1;
       const dir = normalize(this.facing);
 
@@ -968,10 +1252,23 @@
     }
 
     damage(amount, kind, state) {
-      const applied = amount * this.getDamageMultiplier(kind);
+      let applied = amount * this.getDamageMultiplier(kind);
+      if (this.damageGuardTimer > 0) applied *= this.damageGuardMultiplier;
       if (applied <= 0) return 0;
-      this.hp = Math.max(0, this.hp - applied);
+      if (this.hp - applied <= 0 && this.deathSaveCharges > 0) {
+        this.deathSaveCharges -= 1;
+        applied = Math.max(0, this.hp - 1);
+        this.hp = 1;
+        this.tempSpeedMultiplier = Math.max(this.tempSpeedMultiplier, 1.24);
+        this.tempSpeedTimer = Math.max(this.tempSpeedTimer, 4);
+        state.pushMessage("補強装甲Ⅴ型: 大破を回避");
+      } else {
+        this.hp = Math.max(0, this.hp - applied);
+      }
       state.damageTaken += applied;
+      if (this.damageGuardDuration > 0) {
+        this.damageGuardTimer = Math.max(this.damageGuardTimer, this.damageGuardDuration);
+      }
       if (state && typeof state.onPlayerDamaged === "function") {
         state.onPlayerDamaged(applied, kind);
       }
@@ -1003,6 +1300,7 @@
       this.damageCount = 0;
       this.age = 0;
       this.coolingStep = 0;
+      this.dataJamTimer = 0;
       this.cargoSlots = this.type.cargoSlots || 1;
     }
 
@@ -1023,6 +1321,14 @@
           state.pushMessage("冷却品の価値が低下");
         }
         this.coolingStep = nextStep;
+      }
+      if (this.status === "carried" && this.type.key === "data" && state) {
+        const jammed = state.commsTimer > 0 || state.isJammedByUnit();
+        this.dataJamTimer = jammed ? this.dataJamTimer + dt : Math.max(0, this.dataJamTimer - dt * 0.8);
+        if (this.dataJamTimer >= 4.5 && !this.hacked) {
+          this.hacked = true;
+          state.pushMessage("データ端末の信号が汚染");
+        }
       }
     }
 
@@ -1048,8 +1354,11 @@
       const personnelBonus = 1 + state.personnelEffects.rewardBonus;
       const latePenalty = this.type.timeLimit > 0 && this.remaining <= 0 ? 0.7 : 1;
       const hackPenalty = this.hacked ? 0.85 : 1;
+      const chainBonus = state.deliveryChainTimer > 0 ? state.deliveryChainRewardMultiplier : 1;
+      const urgentBonus = this.urgent ? state.urgentRewardMultiplier : 1;
+      const multiCargoBonus = state.player.getCargo(state).length >= 2 ? state.multiCargoRewardMultiplier : 1;
       const rewardBase = this.currentReward ?? this.type.reward;
-      return Math.round(rewardBase * state.rewardMultiplier * getBalanceValue("rewardMultiplier") * depotBonus * personnelBonus * latePenalty * hackPenalty);
+      return Math.round(rewardBase * state.rewardMultiplier * getBalanceValue("rewardMultiplier") * depotBonus * personnelBonus * latePenalty * hackPenalty * chainBonus * urgentBonus * multiCargoBonus);
     }
 
     applyFragileDamage() {
@@ -1252,6 +1561,26 @@
     }
   }
 
+  class UpgradeStation {
+    constructor(point) {
+      this.id = cryptoId();
+      this.x = point.x;
+      this.y = point.y;
+      this.radius = 34;
+      this.cooldown = 0;
+      this.pulse = Math.random() * Math.PI * 2;
+    }
+
+    update(dt) {
+      this.cooldown = Math.max(0, this.cooldown - dt);
+      this.pulse += dt * (this.cooldown > 0 ? 2 : 4);
+    }
+
+    isReady() {
+      return this.cooldown <= 0;
+    }
+  }
+
   class Projectile {
     constructor(x, y, dir, range, damage) {
       this.x = x;
@@ -1276,6 +1605,7 @@
         if (enemy.dead || enemy.isDead()) continue;
         if (dist(this.x, this.y, enemy.x, enemy.y) < this.radius + enemy.radius) {
           enemy.damage(this.damage, state);
+          state.onPulseHitEnemy(enemy, this.x, this.y);
           this.dead = true;
           break;
         }
@@ -1573,6 +1903,59 @@
     }
   }
 
+  class GiantWatcherDrone {
+    constructor(point) {
+      this.type = "watcher";
+      this.displayName = "巨大監視ドローン";
+      this.x = point.x;
+      this.y = point.y;
+      this.radius = 34;
+      this.life = 46;
+      this.pulse = 0;
+      this.lockCooldown = 3.2;
+      this.drift = rand(0, Math.PI * 2);
+      this.anchor = { x: CONFIG.MAP_W / 2 + rand(-420, 420), y: CONFIG.MAP_H / 2 + rand(-560, 360) };
+    }
+
+    update(dt, state) {
+      this.life -= dt;
+      this.pulse += dt * 3;
+      this.lockCooldown = Math.max(0, this.lockCooldown - dt);
+      this.drift += dt * 0.55;
+      const patrol = {
+        x: this.anchor.x + Math.cos(this.drift) * 260,
+        y: this.anchor.y + Math.sin(this.drift * 0.7) * 180
+      };
+      const dx = patrol.x - this.x;
+      const dy = patrol.y - this.y;
+      const len = Math.hypot(dx, dy) || 1;
+      this.x += (dx / len) * 78 * dt;
+      this.y += (dy / len) * 78 * dt;
+
+      const playerDistance = dist(this.x, this.y, state.player.x, state.player.y);
+      if (playerDistance < 620 && this.lockCooldown <= 0) {
+        const angle = Math.atan2(state.player.y - this.y, state.player.x - this.x);
+        state.bossBeams.push({
+          x: this.x,
+          y: this.y,
+          angle,
+          length: 980,
+          width: 62,
+          warn: 2.1,
+          ttl: 2.5,
+          fired: false
+        });
+        state.runLog.bossLocks += 1;
+        state.pushMessage("巨大監視ドローン: ロックオン警告");
+        this.lockCooldown = 6.2;
+      }
+    }
+
+    isDead() {
+      return this.life <= 0;
+    }
+  }
+
   class GameState {
     constructor(vehicleId, save, runMode = "normal") {
       this.save = save;
@@ -1585,6 +1968,7 @@
       this.money = 0;
       this.deliveries = 0;
       this.damageTaken = 0;
+      this.extraMaterials = 0;
       this.supplyDropsCollected = 0;
       this.bonusBoxesCollected = 0;
       this.bonusMaterials = 0;
@@ -1593,6 +1977,20 @@
       this.fragileDamageCooldown = 0;
       this.rewardMultiplier = this.areaStatus.rewardMultiplier || 1;
       this.materialMultiplier = this.areaStatus.materialMultiplier || 1;
+      this.urgentRewardMultiplier = 1;
+      this.multiCargoRewardMultiplier = 1;
+      this.deliveryChainDuration = 0;
+      this.deliveryChainRewardMultiplier = 1;
+      this.deliveryChainTimer = 0;
+      this.failedReturnKeepRate = 0.5;
+      this.emergencyCargoCapacity = 0;
+      this.liftDurationMultiplier = 1;
+      this.liftInterruptShield = 0;
+      this.liftShieldGraceTimer = 0;
+      this.protectedSurvivorSpeedBonus = 0;
+      this.pulseSkillCooldownReduction = 0;
+      this.pulseExplosionRadius = 0;
+      this.pulseExplosionDamage = 0;
       this.over = false;
       this.buildings = [];
       this.roads = [];
@@ -1605,10 +2003,12 @@
       this.liftProgress = null;
       this.jobs = [];
       this.enemies = [];
+      this.bossUnits = [];
+      this.bossBeams = [];
+      this.bossEventSeen = false;
       this.projectiles = [];
       this.attackEffects = [];
-      this.repairSites = [];
-      this.upgradeSites = [];
+      this.upgradeStations = [];
       this.returnPoint = { x: this.player.x, y: this.player.y };
       this.blackoutTimer = 0;
       this.windTimer = 0;
@@ -1682,12 +2082,8 @@
         this.hazards.push(new Hazard(p.x, p.y, rand(theme.hazardRadius[0], theme.hazardRadius[1])));
       }
 
-      for (let i = 0; i < 4; i += 1) {
-        this.repairSites.push({ ...this.randomFreePoint(220), used: false });
-      }
-
-      for (let i = 0; i < 4; i += 1) {
-        this.upgradeSites.push({ ...this.randomFreePoint(240), used: false });
+      for (let i = 0; i < this.getUpgradeStationCount(); i += 1) {
+        this.upgradeStations.push(new UpgradeStation(this.randomStationPoint(i)));
       }
 
       for (let i = 0; i < 4; i += 1) {
@@ -1746,6 +2142,41 @@
         return p;
       }
       return this.randomFreePoint(260);
+    }
+
+    randomStationPoint(index = 0) {
+      const verticals = this.roads.filter(road => road.vertical).map(road => road.x + road.w / 2);
+      const horizontals = this.roads.filter(road => !road.vertical).map(road => road.y + road.h / 2);
+      const candidates = [];
+      for (const x of verticals) {
+        for (const y of horizontals) {
+          const centerBias = 1 - clamp(dist(x, y, CONFIG.MAP_W / 2, CONFIG.MAP_H / 2) / 1500, 0, 0.72);
+          const playerDistance = dist(x, y, this.player.x, this.player.y);
+          if (playerDistance < 280) continue;
+          candidates.push({ x, y, weight: 0.35 + centerBias });
+        }
+      }
+      for (let attempt = 0; attempt < 80; attempt += 1) {
+        const base = candidates.length > 0
+          ? weightedPick(candidates.map((point, i) => ({ key: i, weight: point.weight })))
+          : null;
+        const origin = base == null ? this.randomFreePoint(320) : candidates[base];
+        const point = {
+          x: clamp(origin.x + rand(-46, 46), 80, CONFIG.MAP_W - 80),
+          y: clamp(origin.y + rand(-46, 46), 80, CONFIG.MAP_H - 80)
+        };
+        if (this.collidesWithBuilding(point.x, point.y, 34)) continue;
+        if (this.isPointInHazard(point.x, point.y, 135)) continue;
+        if (dist(point.x, point.y, this.returnPoint.x, this.returnPoint.y) < 210) continue;
+        if (this.upgradeStations.some(station => dist(point.x, point.y, station.x, station.y) < 360)) continue;
+        return point;
+      }
+      const fallback = this.randomFreePoint(320 + index * 30);
+      return this.isPointInHazard(fallback.x, fallback.y, 120) ? this.randomFreePoint(380) : fallback;
+    }
+
+    getUpgradeStationCount() {
+      return clamp(1 + (this.save.facilities.analysis || 0), 1, 3);
     }
 
     collidesWithBuilding(x, y, radius) {
@@ -1879,6 +2310,8 @@
       this.time = Math.max(0, this.time - dt);
       this.promptTimer = Math.max(0, this.promptTimer - dt);
       this.fragileDamageCooldown = Math.max(0, this.fragileDamageCooldown - dt);
+      this.deliveryChainTimer = Math.max(0, this.deliveryChainTimer - dt);
+      this.liftShieldGraceTimer = Math.max(0, this.liftShieldGraceTimer - dt);
       if (this.promptTimer <= 0) this.prompt = "";
 
       this.player.update(dt, this, app.input);
@@ -1888,10 +2321,12 @@
       this.updateMaterialBoxes(dt);
       this.updateSurvivorSignals(dt);
       this.updateJobs(dt);
+      this.updateStations(dt);
       this.updateSites();
       this.updateEvents(dt);
       this.updateProjectiles(dt);
       this.updateEnemies(dt);
+      this.updateBossEvents(dt);
       this.updateAttackEffects(dt);
       this.updateMessages(dt);
       this.updateCamera();
@@ -1933,7 +2368,18 @@
           if (damaged > 0) this.pushPrompt("危険区域");
         }
       }
-      if (inHazardNow && !this.wasInHazard) this.runLog.hazardEntries += 1;
+      if (inHazardNow && !this.wasInHazard) {
+        this.runLog.hazardEntries += 1;
+        if (this.player.hazardEntryImmunityDuration > 0) {
+          this.player.hazardEntryImmunityTimer = Math.max(this.player.hazardEntryImmunityTimer, this.player.hazardEntryImmunityDuration);
+          this.pushPrompt("危険突入シールド");
+        }
+      }
+      if (!inHazardNow && this.wasInHazard && this.player.hazardExitSpeedMultiplier > 1) {
+        this.player.tempSpeedMultiplier = Math.max(this.player.tempSpeedMultiplier, this.player.hazardExitSpeedMultiplier);
+        this.player.tempSpeedTimer = Math.max(this.player.tempSpeedTimer, 3.5);
+        this.pushPrompt("危険区域離脱ブースト");
+      }
       this.wasInHazard = inHazardNow;
       this.hazards = this.hazards.filter(hazard => !hazard.isDead());
     }
@@ -1987,7 +2433,7 @@
           this.interruptLift("リフト回収中断: 距離が離れた");
           return;
         }
-        if (this.damageTaken > this.liftProgress.damageAtStart + 0.01) {
+        if (this.liftShieldGraceTimer <= 0 && this.damageTaken > this.liftProgress.damageAtStart + 0.01) {
           this.interruptLift("リフト回収中断: 損傷");
           return;
         }
@@ -2036,7 +2482,7 @@
       this.liftProgress = {
         signal: nearest,
         timer: 0,
-        duration: 2.5,
+        duration: 2.5 * this.liftDurationMultiplier,
         damageAtStart: this.damageTaken
       };
       this.pushMessage("リフト回収開始");
@@ -2060,6 +2506,7 @@
         } else if (job.status === "carried") {
           const d = dist(this.player.x, this.player.y, job.destination.x, job.destination.y);
           if (d < 44) {
+            const chainActive = this.deliveryChainTimer > 0 && this.deliveryChainRewardMultiplier > 1;
             const reward = job.getReward(this);
             this.money += reward;
             this.deliveries += 1;
@@ -2067,7 +2514,16 @@
             this.runLog.money += reward;
             this.recordSpecialDelivery(job, reward);
             job.status = "delivered";
+            if (chainActive) this.pushPrompt("連続納品ボーナス");
             this.pushMessage(`${getJobDeliveryMessage(job)} +${reward}`);
+            if (this.deliveryChainDuration > 0) this.deliveryChainTimer = this.deliveryChainDuration;
+            if (this.player.postDeliverySpeedDuration > 0) {
+              this.player.postDeliverySpeedTimer = Math.max(this.player.postDeliverySpeedTimer, this.player.postDeliverySpeedDuration);
+            }
+            if (this.player.postDeliveryHazardImmunityDuration > 0) {
+              this.player.postDeliveryHazardImmunityTimer = Math.max(this.player.postDeliveryHazardImmunityTimer, this.player.postDeliveryHazardImmunityDuration);
+              this.pushPrompt("納品後危険耐性");
+            }
             this.spawnJob(false);
           }
         }
@@ -2080,23 +2536,22 @@
       }
     }
 
+    updateStations(dt) {
+      for (const station of this.upgradeStations) {
+        station.update(dt);
+      }
+    }
+
     updateSites() {
       if (this.runMode === "bonus") return;
-      for (const site of this.repairSites) {
-        if (site.used) continue;
-        if (dist(this.player.x, this.player.y, site.x, site.y) < 40) {
-          site.used = true;
-          this.player.heal(26 + (this.save.facilities.medical || 0) * 6 + this.personnelEffects.repairBonus);
-          this.runLog.repairsUsed += 1;
-          this.pushMessage("修理地点でHP回復");
-        }
-      }
-
-      for (const site of this.upgradeSites) {
-        if (site.used) continue;
-        if (dist(this.player.x, this.player.y, site.x, site.y) < 42) {
-          site.used = true;
-          openUpgradeSelection(this);
+      for (const station of this.upgradeStations) {
+        const distance = dist(this.player.x, this.player.y, station.x, station.y);
+        if (distance < station.radius + this.player.radius + 4) {
+          if (station.isReady()) {
+            openStationSelection(this, station);
+          } else {
+            this.pushPrompt(`強化ステーション再起動 ${Math.ceil(station.cooldown)}秒`);
+          }
           break;
         }
       }
@@ -2168,7 +2623,8 @@
         { key: "comms", weight: 0.8 },
         { key: "fireSpread", weight: 0.9 },
         { key: "supplyDrop", weight: 0.8 * getBalanceValue("supplyDropRate") },
-        { key: "cargoHack", weight: 0.55 * getInterferenceRate() }
+        { key: "cargoHack", weight: 0.55 * getInterferenceRate() },
+        { key: "watcher", weight: this.time < this.timeLimitForBoss() && !this.bossEventSeen ? 0.22 : 0 }
       ]));
       this.logEvent(event);
       if (event === "collapse") {
@@ -2225,9 +2681,16 @@
       if (event === "cargoHack") {
         this.spawnEnemy("hacker", { message: true });
       }
+      if (event === "watcher") {
+        this.spawnWatcherEvent();
+      }
       if (this.time <= getReturnWarningTime() && chanceByMultiplier(0.18, "interferenceUnitRate")) {
         this.spawnEnemy("patrol", { message: true });
       }
+    }
+
+    timeLimitForBoss() {
+      return (this.areaStatus?.timeRange?.[1] || CONFIG.RUN_DURATION) - 70;
     }
 
     updateProjectiles(dt) {
@@ -2245,6 +2708,44 @@
       this.enemies = this.enemies.filter(enemy => !enemy.isDead());
     }
 
+    updateBossEvents(dt) {
+      for (const boss of this.bossUnits) {
+        boss.update(dt, this);
+      }
+      this.bossUnits = this.bossUnits.filter(boss => !boss.isDead());
+      for (const beam of this.bossBeams) {
+        beam.ttl -= dt;
+        if (!beam.fired) {
+          beam.warn -= dt;
+          if (beam.warn <= 0) {
+            beam.fired = true;
+            beam.ttl = 0.38;
+            if (isPointInsideBeam(this.player.x, this.player.y, beam)) {
+              this.player.damage(26, "enemy", this);
+              this.runLog.bossHits += 1;
+              this.pushPrompt("監視ドローン砲撃");
+            }
+          }
+        }
+      }
+      this.bossBeams = this.bossBeams.filter(beam => beam.ttl > 0);
+    }
+
+    spawnWatcherEvent() {
+      if (this.bossEventSeen || this.bossUnits.length > 0) return false;
+      const side = pick(["left", "right", "top"]);
+      const point = side === "left"
+        ? { x: -120, y: rand(260, CONFIG.MAP_H - 560) }
+        : side === "right"
+          ? { x: CONFIG.MAP_W + 120, y: rand(260, CONFIG.MAP_H - 560) }
+          : { x: rand(260, CONFIG.MAP_W - 260), y: -120 };
+      this.bossUnits.push(new GiantWatcherDrone(point));
+      this.bossEventSeen = true;
+      this.runLog.bossEvents += 1;
+      this.pushMessage("大型反応: 巨大監視ドローン接近");
+      return true;
+    }
+
     updateAttackEffects(dt) {
       for (const effect of this.attackEffects) {
         effect.ttl -= dt;
@@ -2258,6 +2759,7 @@
         if (enemy.dead || enemy.isDead()) continue;
         if (dist(x, y, enemy.x, enemy.y) <= radius + enemy.radius) {
           enemy.damage(damage, this);
+          this.onPulseHitEnemy(enemy, enemy.x, enemy.y);
           hit += 1;
         }
       }
@@ -2275,10 +2777,28 @@
         const dot = (dx / len) * dir.x + (dy / len) * dir.y;
         if (dot >= Math.cos(angle)) {
           enemy.damage(damage, this);
+          this.onPulseHitEnemy(enemy, enemy.x, enemy.y);
           hit += 1;
         }
       }
       return hit;
+    }
+
+    onPulseHitEnemy(primaryEnemy, x, y) {
+      if (this.pulseSkillCooldownReduction > 0 && this.player.skillCooldown > 0) {
+        this.player.skillCooldown = Math.max(0, this.player.skillCooldown - this.pulseSkillCooldownReduction);
+      }
+      if (this.pulseExplosionRadius <= 0) return;
+      let splashHits = 0;
+      for (const enemy of this.enemies) {
+        if (enemy === primaryEnemy || enemy.dead || enemy.isDead()) continue;
+        if (dist(x, y, enemy.x, enemy.y) <= this.pulseExplosionRadius + enemy.radius) {
+          enemy.damage(this.pulseExplosionDamage, this);
+          splashHits += 1;
+        }
+      }
+      this.attackEffects.push({ type: "ring", x, y, radius: this.pulseExplosionRadius, ttl: 0.16, color: "#ff8fd8" });
+      if (splashHits > 0) this.pushPrompt(`パルス爆裂 ${splashHits}機巻込`);
     }
 
     getNearestSurvivorSignal() {
@@ -2296,12 +2816,12 @@
     }
 
     hasFreeCapacity(requiredSlots = 1) {
-      return this.getUsedCapacity() + requiredSlots <= this.player.capacity;
+      return this.getUsedCapacity() + requiredSlots <= this.player.capacity + this.emergencyCargoCapacity;
     }
 
     getProtectedSurvivorSpeedMultiplier() {
-      if (this.protectedSurvivors.some(survivor => survivor.trait === "胆力")) return 0.93;
-      return 0.88;
+      const base = this.protectedSurvivors.some(survivor => survivor.trait === "胆力") ? 0.93 : 0.88;
+      return Math.min(0.98, base + this.protectedSurvivorSpeedBonus);
     }
 
     isPointInHazard(x, y, margin = 0) {
@@ -2322,6 +2842,14 @@
 
     interruptLift(message) {
       if (!this.liftProgress) return;
+      const shieldable = !message.includes("距離") && !message.includes("積載枠") && !message.includes("危険区域");
+      if (shieldable && this.liftInterruptShield > 0) {
+        this.liftInterruptShield -= 1;
+        this.liftProgress.damageAtStart = this.damageTaken;
+        this.liftShieldGraceTimer = Math.max(this.liftShieldGraceTimer, 1.3);
+        this.pushMessage("回収防護フィールド: 中断を防止");
+        return;
+      }
       this.liftProgress = null;
       this.runLog.liftInterrupted += 1;
       this.pushMessage(message);
@@ -2343,6 +2871,10 @@
 
     onEnemyDisabled() {
       this.runLog.enemiesDisabled += 1;
+      if (this.player.disableBoostMultiplier > 1) {
+        this.player.disableBoostTimer = Math.max(this.player.disableBoostTimer, 3);
+        this.pushPrompt("撃破加速");
+      }
     }
 
     onPlayerDamaged(amount) {
@@ -2360,21 +2892,47 @@
     }
 
     recordSpecialDelivery(job, reward) {
+      if (job.type.key === "medical") {
+        this.runLog.medicalDelivered += 1;
+        if (job.remaining > 0) this.runLog.medicalFastDelivered += 1;
+      }
+      if (job.type.key === "data") {
+        this.runLog.dataDelivered += 1;
+        if (!job.hacked) {
+          this.extraMaterials += 2;
+          this.runLog.dataCleanDelivered += 1;
+          this.runLog.dataBonusMaterials += 2;
+          this.pushPrompt("データ端末解析 +資材2");
+        }
+      }
       if (!job.type.special) return;
       this.runLog.specialDelivered += 1;
       if (job.type.special === "fragile") {
         this.runLog.fragileDelivered += 1;
-        if (job.damageCount === 0) this.runLog.fragilePerfect += 1;
+        if (job.damageCount === 0) {
+          this.runLog.fragilePerfect += 1;
+          this.extraMaterials += 3;
+          this.runLog.fragileBonusMaterials += 3;
+          this.pushPrompt("壊れ物無傷 +資材3");
+        }
       }
       if (job.type.special === "cooling") {
         const value = job.getValuePercent();
         this.runLog.coolingDelivered += 1;
         this.runLog.coolingValueTotal += value;
-        if (value >= 80) this.runLog.coolingHighValue += 1;
+        if (value >= 80) {
+          this.runLog.coolingHighValue += 1;
+          this.extraMaterials += 3;
+          this.runLog.coolingBonusMaterials += 3;
+          this.pushPrompt("冷却状態良好 +資材3");
+        }
       }
       if (job.type.special === "heavy") {
         this.runLog.heavyDelivered += 1;
         this.runLog.heavyMoney += reward;
+        this.extraMaterials += 4;
+        this.runLog.heavyBonusMaterials += 4;
+        this.pushPrompt("重量貨物搬入 +資材4");
       }
     }
 
@@ -2925,7 +3483,11 @@
       skillUsed: 0,
       hazardEntries: 0,
       supplyCollected: 0,
+      stationUses: 0,
+      stationRepairs: 0,
+      stationMods: 0,
       upgradesTaken: 0,
+      highestUpgradeTier: 0,
       repairsUsed: 0,
       survivorSignals: 0,
       liftSuccess: 0,
@@ -2936,6 +3498,11 @@
       returnSecondsLeft: null,
       farthestTargetDistance: 0,
       specialDelivered: 0,
+      medicalDelivered: 0,
+      medicalFastDelivered: 0,
+      dataDelivered: 0,
+      dataCleanDelivered: 0,
+      dataBonusMaterials: 0,
       fragileDelivered: 0,
       fragilePerfect: 0,
       fragileDamage: 0,
@@ -2943,7 +3510,17 @@
       coolingHighValue: 0,
       coolingValueTotal: 0,
       heavyDelivered: 0,
-      heavyMoney: 0
+      heavyMoney: 0,
+      fragileBonusMaterials: 0,
+      coolingBonusMaterials: 0,
+      heavyBonusMaterials: 0,
+      bossEvents: 0,
+      bossLocks: 0,
+      bossHits: 0,
+      upgradeBuildCounts: {},
+      upgradeTagCounts: {},
+      upgradeHistory: [],
+      upgradeTierFiveCount: 0
     };
   }
 
@@ -2959,7 +3536,8 @@
       comms: "通信障害",
       fireSpread: "火災延焼",
       supplyDrop: "支援物資落下",
-      cargoHack: "カーゴハッカー"
+      cargoHack: "カーゴハッカー",
+      watcher: "巨大監視ドローン"
     }[key] || key;
   }
 
@@ -2991,6 +3569,10 @@
     if (job.type.key === "medical") return "医";
     if (job.type.key === "data") return "D";
     return "受";
+  }
+
+  function getStationRepairAmount(state) {
+    return 30 + (state.save.facilities.medical || 0) * 8 + state.personnelEffects.repairBonus;
   }
 
   function setupEvents() {
@@ -3657,8 +4239,7 @@
       ["#f16363", "赤: 危険/妨害ユニット"],
       ["#ff8fd8", "ピンク: 生存者信号"],
       ["#65a7ff", "青: 帰還地点"],
-      ["#bf7cff", "紫: ラン中強化"],
-      ["#f8fbfc", "白: 修理地点"]
+      ["#bf7cff", "紫: 強化ステーション"]
     ];
     legend.forEach((item, index) => {
       const y = Y(64 + index * 14);
@@ -3754,18 +4335,65 @@
     app.state.player.attack(app.state);
   }
 
-  function openUpgradeSelection(state) {
+  function openStationSelection(state, station) {
+    app.mode = "station";
+    dom.upgradeOverlay.hidden = false;
+    dom.upgradeTitle.textContent = "強化ステーション";
+    dom.upgradeIntro.textContent = "修理するか、改造候補を呼び出します。使用後は60秒間再起動します。";
+    dom.upgradeChoices.innerHTML = "";
+    const repairAmount = getStationRepairAmount(state);
+    const repair = document.createElement("button");
+    repair.className = "choice-card station-choice";
+    repair.innerHTML = `
+      <span class="choice-meta">即時支援 / 再起動60秒</span>
+      <strong>修理</strong>
+      <span>機体HPを${repairAmount}回復します。医療区画と医療士の補正込み。</span>
+    `;
+    repair.addEventListener("click", () => {
+      state.player.heal(repairAmount);
+      state.runLog.repairsUsed += 1;
+      state.runLog.stationUses += 1;
+      state.runLog.stationRepairs += 1;
+      station.cooldown = 60;
+      state.pushMessage(`強化ステーション: 修理 +${repairAmount}`);
+      dom.upgradeOverlay.hidden = true;
+      app.mode = "playing";
+    });
+    const mod = document.createElement("button");
+    mod.className = "choice-card station-choice";
+    mod.innerHTML = `
+      <span class="choice-meta">ラン中改造 / 再起動60秒</span>
+      <strong>改造</strong>
+      <span>Ⅰ型〜Ⅴ型の改造候補を3つ表示します。解析室と解析員で上位型が出やすくなります。</span>
+    `;
+    mod.addEventListener("click", () => openUpgradeSelection(state, station));
+    dom.upgradeChoices.append(repair, mod);
+  }
+
+  function openUpgradeSelection(state, station = null) {
     app.mode = "upgrade";
     dom.upgradeOverlay.hidden = false;
+    dom.upgradeTitle.textContent = "ラン中改造";
+    dom.upgradeIntro.textContent = "1つ選ぶと効果が即時適用され、ステーションは60秒間再起動します。";
     dom.upgradeChoices.innerHTML = "";
     const choices = getUpgradeChoices(state);
     for (const upgrade of choices) {
       const button = document.createElement("button");
-      button.className = "choice-card";
-      button.innerHTML = `<strong>${upgrade.name}</strong><span>${upgrade.text}</span>`;
+      const synergy = getUpgradeSynergyText(state, upgrade);
+      button.className = `choice-card${upgrade.tier === 5 ? " experimental" : ""}`;
+      button.innerHTML = `
+        <span class="choice-meta">${upgrade.buildName} / ${upgrade.tierLabel}${upgrade.tier === 5 ? " / 未承認実験型" : ""}${synergy}</span>
+        <strong>${upgrade.name}</strong>
+        <span>${upgrade.text}</span>
+      `;
       button.addEventListener("click", () => {
         upgrade.apply(state);
-        state.runLog.upgradesTaken += 1;
+        recordUpgradeChoice(state, upgrade);
+        if (station) {
+          station.cooldown = 60;
+          state.runLog.stationUses += 1;
+          state.runLog.stationMods += 1;
+        }
         state.pushMessage(`${upgrade.name}を獲得`);
         dom.upgradeOverlay.hidden = true;
         app.mode = "playing";
@@ -3788,9 +4416,9 @@
       bonus = Math.round(finalMoney * CONFIG.RETURN_BONUS_RATE);
       finalMoney += bonus;
     } else {
-      finalMoney = Math.floor(finalMoney * 0.5);
+      finalMoney = Math.floor(finalMoney * (state.failedReturnKeepRate || 0.5));
     }
-    const baseMaterials = Math.max(0, Math.floor(finalMoney / 80) + state.deliveries * 2 + (returned ? 4 : 0));
+    const baseMaterials = Math.max(0, Math.floor(finalMoney / 80) + state.deliveries * 2 + (returned ? 4 : 0) + state.extraMaterials);
     const materials = Math.round(baseMaterials * getBalanceValue("materialMultiplier") * (state.materialMultiplier || 1));
     const rank = getRank(state.deliveries, returned);
     const joinedSurvivors = returned
@@ -3836,11 +4464,13 @@
       vehicle: state.player.vehicle.name,
       stageTheme: state.stageTheme.name,
       areaStatus: state.areaStatus.name,
+      buildSummary: getBuildSummary(runLog),
       materials,
       rank,
       joinedSurvivors,
       lostSurvivorCount,
       runLog,
+      failedKeepRate: state.failedReturnKeepRate || 0.5,
       hpRatio: state.player.maxHp > 0 ? state.player.hp / state.player.maxHp : 0,
       supplyDropsCollected: state.supplyDropsCollected,
       bestUpdates,
@@ -3957,6 +4587,14 @@
     const bestUpdateHtml = result.bestUpdates.length > 0
       ? `<div class="result-callout good">${result.bestUpdates.map(text => `<span>${text}</span>`).join("")}</div>`
       : "";
+    const buildCalloutHtml = result.runLog.upgradesTaken > 0
+      ? `
+        <div class="result-callout${result.runLog.upgradeTierFiveCount > 0 ? " experimental-callout" : ""}">
+          <span>今回のビルド: ${result.buildSummary}</span>
+          ${result.runLog.upgradeTierFiveCount > 0 ? `<span>Ⅴ型強化取得: ${result.runLog.upgradeTierFiveCount}個 / 実験型パーツ使用記録あり</span>` : ""}
+        </div>
+      `
+      : "";
     const noticeHtml = [
       result.canUpgrade ? `<span class="notice-chip good">強化可能な施設があります</span>` : "",
       result.unassignedCount > 0 ? `<span class="notice-chip warn">未配置の人員が${result.unassignedCount}名います</span>` : "",
@@ -3979,11 +4617,15 @@
         <div><span>機体</span><strong>${result.vehicle}</strong></div>
         <div><span>配送区域</span><strong>${result.stageTheme}</strong></div>
         <div><span>区域状況</span><strong>${result.areaStatus}</strong></div>
+        <div><span>今回のビルド</span><strong>${result.buildSummary}</strong></div>
+        <div><span>取得最高型</span><strong>${getHighestUpgradeTierText(result.runLog)}</strong></div>
+        <div><span>ステーション使用</span><strong>${result.runLog.stationUses || 0}回</strong></div>
         <div><span>永続資材</span><strong>${result.materials}</strong></div>
         <div><span>理由</span><strong>${reasonText}</strong></div>
       </div>
       ${bestUpdateHtml}
-      <p>${result.returned ? `帰還ボーナス +${result.bonus}` : "帰還できなかったため今回の報酬は半分になりました。"}</p>
+      ${buildCalloutHtml}
+      <p>${result.returned ? `帰還ボーナス +${result.bonus}` : `帰還できなかったため今回の報酬持ち帰りは${Math.round((result.failedKeepRate || 0.5) * 100)}%です。`}</p>
       ${survivorResult}
       ${specialLogHtml}
       ${runLogHtml}
@@ -4026,14 +4668,19 @@
   }
 
   function renderSpecialDeliveryLogHtml(log) {
-    if (!log || !log.specialDelivered) return "";
+    if (!log || !(log.specialDelivered || log.medicalDelivered || log.dataDelivered)) return "";
     const coolingAverage = log.coolingDelivered > 0
       ? Math.round(log.coolingValueTotal / log.coolingDelivered)
       : 0;
+    const bonusMaterials = (log.fragileBonusMaterials || 0) + (log.coolingBonusMaterials || 0) + (log.heavyBonusMaterials || 0) + (log.dataBonusMaterials || 0);
     return `
       <div class="run-log special-delivery-log">
         <strong>特殊配送ログ</strong>
         <div class="log-grid">
+          <span>医療品納品: ${log.medicalDelivered || 0}件</span>
+          <span>医療品迅速納品: ${log.medicalFastDelivered || 0}件</span>
+          <span>データ端末納品: ${log.dataDelivered || 0}件</span>
+          <span>データ無汚染: ${log.dataCleanDelivered || 0}件</span>
           <span>壊れ物納品: ${log.fragileDelivered}件</span>
           <span>壊れ物無傷: ${log.fragilePerfect}件</span>
           <span>壊れ物損傷: ${log.fragileDamage}回</span>
@@ -4041,6 +4688,7 @@
           <span>冷却品平均価値: ${coolingAverage || "-"}%</span>
           <span>重量貨物納品: ${log.heavyDelivered}件</span>
           <span>重量貨物収益: ${log.heavyMoney}</span>
+          <span>特殊配送ボーナス資材: ${bonusMaterials}</span>
         </div>
       </div>
     `;
@@ -4051,6 +4699,14 @@
     const eventRows = Object.entries(log.eventsByType || {})
       .map(([name, count]) => `<span>${name}: ${count}回</span>`)
       .join("");
+    const upgradeRows = log.upgradesTaken > 0
+      ? `
+        <span>ビルド傾向: ${getBuildSummary(log)}</span>
+        <span>系統内訳: ${getBuildBreakdownText(log)}</span>
+        <span>Ⅴ型強化: ${log.upgradeTierFiveCount || 0}個</span>
+        <span>取得強化: ${(log.upgradeHistory || []).map(upgrade => upgrade.name).join(" / ") || "-"}</span>
+      `
+      : "";
     return `
       <div class="run-log">
         <strong>今回のログ</strong>
@@ -4072,7 +4728,11 @@
           <summary>詳細ログ</summary>
           <div class="log-grid compact-log">
             <span>危険区域侵入: ${log.hazardEntries}回</span>
+            <span>強化ステーション: ${log.stationUses || 0}回</span>
+            <span>ステーション修理: ${log.stationRepairs || 0}回</span>
+            <span>ステーション改造: ${log.stationMods || 0}回</span>
             <span>強化取得: ${log.upgradesTaken}回</span>
+            <span>取得最高型: ${getHighestUpgradeTierText(log)}</span>
             <span>修理使用: ${log.repairsUsed}回</span>
             <span>生存者信号: ${log.survivorSignals}回</span>
             <span>リフト成功: ${log.liftSuccess}回</span>
@@ -4080,6 +4740,11 @@
             <span>拠点加入: ${log.survivorsJoined}名</span>
             <span>最高人員: ${log.bestSurvivorRarity || "なし"}</span>
             <span>最遠目的地: ${log.farthestTargetDistance}m</span>
+            <span>巨大監視ドローン: ${log.bossEvents || 0}回</span>
+            <span>監視回避: ${(log.bossEvents || 0) > 0 && (log.bossHits || 0) === 0 ? "成功" : ((log.bossEvents || 0) > 0 ? "被弾あり" : "-")}</span>
+            <span>監視ロックオン: ${log.bossLocks || 0}回</span>
+            <span>監視砲撃被弾: ${log.bossHits || 0}回</span>
+            ${upgradeRows}
             ${eventRows || "<span>イベント内訳なし</span>"}
           </div>
         </details>
@@ -4090,6 +4755,7 @@
 
   function getRunLogHint(log) {
     if (log.eventsTotal >= 9) return "危険イベントが多めでした。イベント間隔を少し長くすると遊びやすくなります。";
+    if ((log.bossEvents || 0) > 0 && (log.bossHits || 0) === 0) return "巨大監視ドローンを回避できました。警告ラインが出た時はルート変更が有効です。";
     if (log.survivorsProtected > 0 && log.survivorsJoined === 0) return "生存者を保護できました。次は帰還を優先すると人員加入が安定します。";
     if (log.enemiesSpawned > 0 && log.pulseUsed <= 1) return "パルス使用が少なめです。妨害ユニットは無力化も選択肢です。";
     if (log.returnSecondsLeft != null && log.returnSecondsLeft < 15) return "帰還残り時間が少なめです。残り60秒時点で帰還ルートを意識しましょう。";
@@ -4148,6 +4814,13 @@
     }
     if (state.areaStatus) {
       panelLines.push(`<strong>区域状況</strong> ${state.areaStatus.name} / ${state.areaStatus.shortText}`);
+    }
+    const nearestStation = nearestUpgradeStation(state);
+    if (nearestStation) {
+      const stationText = nearestStation.station.isReady()
+        ? `使用可 / ${Math.round(nearestStation.distance)}m`
+        : `再起動 ${Math.ceil(nearestStation.station.cooldown)}秒 / ${Math.round(nearestStation.distance)}m`;
+      panelLines.push(`<strong>強化ステーション</strong> ${stationText}`);
     }
     if (state.liftProgress) {
       const progress = Math.floor((state.liftProgress.timer / state.liftProgress.duration) * 100);
@@ -4238,7 +4911,7 @@
     if (app.state && app.mode === "playing") {
       app.state.update(dt);
     }
-    if (app.state && (app.mode === "playing" || app.mode === "upgrade")) {
+    if (app.state && (app.mode === "playing" || app.mode === "upgrade" || app.mode === "station")) {
       draw(app.state);
       updateUi();
     }
@@ -4318,12 +4991,8 @@
       drawSurvivorSignal(signal, markerAlpha);
     }
 
-    for (const site of state.repairSites) {
-      if (!site.used) drawRepairSite(site);
-    }
-
-    for (const site of state.upgradeSites) {
-      if (!site.used) drawUpgradeSite(site);
+    for (const station of state.upgradeStations) {
+      drawUpgradeStation(station);
     }
 
     for (const job of state.jobs) {
@@ -4339,8 +5008,16 @@
       drawAttackEffect(effect);
     }
 
+    for (const beam of state.bossBeams) {
+      drawWatcherBeam(beam);
+    }
+
     for (const enemy of state.enemies) {
       drawInterferenceUnit(enemy);
+    }
+
+    for (const boss of state.bossUnits) {
+      drawGiantWatcher(boss);
     }
 
     drawPlayer(state.player);
@@ -4536,23 +5213,17 @@
     ctx.restore();
   }
 
-  function drawRepairSite(site) {
+  function drawUpgradeStation(site) {
     ctx.save();
     ctx.translate(site.x, site.y);
-    ctx.fillStyle = "rgba(255,255,255,0.2)";
+    const ready = site.isReady();
+    const pulse = ready ? 5 + Math.sin(site.pulse) * 4 : 0;
+    ctx.globalAlpha = ready ? 1 : 0.58;
+    ctx.fillStyle = ready ? "rgba(191,124,255,0.22)" : "rgba(84,70,102,0.22)";
     ctx.beginPath();
-    ctx.arc(0, 0, 28, 0, Math.PI * 2);
+    ctx.arc(0, 0, 38 + pulse, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = "#f8fbfc";
-    ctx.fillRect(-5, -17, 10, 34);
-    ctx.fillRect(-17, -5, 34, 10);
-    ctx.restore();
-  }
-
-  function drawUpgradeSite(site) {
-    ctx.save();
-    ctx.translate(site.x, site.y);
-    ctx.fillStyle = "rgba(191,124,255,0.24)";
+    ctx.fillStyle = ready ? "rgba(191,124,255,0.3)" : "rgba(90,76,108,0.3)";
     ctx.beginPath();
     for (let i = 0; i < 6; i += 1) {
       const a = Math.PI / 6 + i * Math.PI / 3;
@@ -4563,13 +5234,14 @@
     }
     ctx.closePath();
     ctx.fill();
-    ctx.strokeStyle = "#bf7cff";
+    ctx.strokeStyle = ready ? "#bf7cff" : "#7b6a93";
     ctx.lineWidth = 3;
     ctx.stroke();
-    ctx.fillStyle = "#f3e8ff";
-    ctx.font = "bold 17px system-ui";
+    ctx.fillStyle = ready ? "#f3e8ff" : "#c1b3d4";
+    ctx.font = "bold 15px system-ui";
     ctx.textAlign = "center";
-    ctx.fillText("+", 0, 6);
+    ctx.fillText(ready ? "改" : Math.ceil(site.cooldown), 0, 5);
+    drawLabel(ready ? "強化ステーション" : "再起動中", 0, -44, ready ? "#bf7cff" : "#9b8eb0");
     ctx.restore();
   }
 
@@ -4657,6 +5329,71 @@
       ctx.lineTo(effect.range, 0);
       ctx.stroke();
     }
+    ctx.restore();
+  }
+
+  function drawWatcherBeam(beam) {
+    ctx.save();
+    ctx.translate(beam.x, beam.y);
+    ctx.rotate(beam.angle);
+    if (!beam.fired) {
+      const flash = 0.28 + Math.sin(performance.now() / 80) * 0.08;
+      ctx.fillStyle = `rgba(255, 88, 88, ${flash})`;
+      ctx.fillRect(0, -beam.width / 2, beam.length, beam.width);
+      ctx.strokeStyle = "rgba(255, 220, 170, 0.85)";
+      ctx.lineWidth = 3;
+      ctx.setLineDash([18, 10]);
+      ctx.strokeRect(0, -beam.width / 2, beam.length, beam.width);
+      ctx.setLineDash([]);
+    } else {
+      ctx.fillStyle = "rgba(255, 235, 190, 0.72)";
+      ctx.fillRect(0, -beam.width / 2, beam.length, beam.width);
+      ctx.strokeStyle = "rgba(255, 96, 72, 0.95)";
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(beam.length, 0);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function drawGiantWatcher(boss) {
+    ctx.save();
+    ctx.translate(boss.x, boss.y);
+    const pulse = Math.sin(boss.pulse) * 5;
+    ctx.fillStyle = "rgba(255, 60, 60, 0.1)";
+    ctx.beginPath();
+    ctx.arc(0, 0, 96 + pulse, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255, 80, 80, 0.42)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, 96, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = "#321014";
+    ctx.strokeStyle = "#ff6f70";
+    ctx.lineWidth = 4;
+    roundedRect(ctx, -44, -24, 88, 48, 10);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#ffdb72";
+    ctx.beginPath();
+    ctx.arc(0, 0, 13, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#ff8d5c";
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.moveTo(-58, -34);
+    ctx.lineTo(-30, -18);
+    ctx.moveTo(58, -34);
+    ctx.lineTo(30, -18);
+    ctx.moveTo(-58, 34);
+    ctx.lineTo(-30, 18);
+    ctx.moveTo(58, 34);
+    ctx.lineTo(30, 18);
+    ctx.stroke();
+    drawLabel("巨大監視", 0, -58, "#ff6f70");
     ctx.restore();
   }
 
@@ -4882,11 +5619,8 @@
     for (const signal of state.survivorSignals) {
       drawRadarMarker(state, signal, "#ff8fd8", cx, cy, radius, radarRange, 4.2, true);
     }
-    for (const site of state.repairSites) {
-      if (!site.used) drawRadarMarker(state, site, "#f8fbfc", cx, cy, radius, radarRange, 3.3, true);
-    }
-    for (const site of state.upgradeSites) {
-      if (!site.used) drawRadarMarker(state, site, "#bf7cff", cx, cy, radius, radarRange, 3.4, true);
+    for (const station of state.upgradeStations) {
+      drawRadarMarker(state, station, station.isReady() ? "#bf7cff" : "#7b6a93", cx, cy, radius, radarRange, station.isReady() ? 3.8 : 2.8, true);
     }
     drawRadarMarker(state, state.returnPoint, "#65a7ff", cx, cy, radius, radarRange, 4.2, true);
     for (const job of state.jobs) {
@@ -4945,11 +5679,8 @@
     for (const job of state.jobs) {
       if (job.status === "available" && job.urgent) add(job.pickup, "緊急", "#ffb454", 5);
     }
-    for (const site of state.upgradeSites) {
-      if (!site.used) add(site, "強化", "#bf7cff", 6);
-    }
-    for (const site of state.repairSites) {
-      if (!site.used) add(site, "修理", "#f8fbfc", 7);
+    for (const station of state.upgradeStations) {
+      add(station, station.isReady() ? "強化" : "再起動", station.isReady() ? "#bf7cff" : "#7b6a93", station.isReady() ? 6 : 8);
     }
     return targets;
   }
@@ -5068,6 +5799,15 @@
     return best;
   }
 
+  function nearestUpgradeStation(state) {
+    let best = null;
+    for (const station of state.upgradeStations || []) {
+      const distance = dist(state.player.x, state.player.y, station.x, station.y);
+      if (!best || distance < best.distance) best = { station, distance };
+    }
+    return best;
+  }
+
   function getFacilityCost(level) {
     return [10, 25, 50][level] ?? null;
   }
@@ -5125,28 +5865,161 @@
     return result;
   }
 
-  function getUpgradeChoices(state) {
-    const bonus = state?.personnelEffects?.analysisBonus || 0;
-    const extra = Math.min(4, Math.floor(bonus));
-    const candidates = sample(UPGRADE_POOL, Math.min(UPGRADE_POOL.length, 3 + extra));
-    if (extra <= 0) return candidates.slice(0, 3);
-    const priority = {
-      bag: 5,
-      armor: 4,
-      negotiation: 4,
-      hazardAi: 4,
-      cooling: 3,
-      lightFrame: 3,
-      motor: 2,
-      repairKit: state.player.hp < state.player.maxHp * 0.55 ? 5 : 1
+  function changeMaxHp(player, amount, heal = 0) {
+    player.maxHp = Math.max(1, Math.round(player.maxHp + amount));
+    player.hp = Math.min(player.hp, player.maxHp);
+    if (heal > 0) player.heal(heal);
+  }
+
+  function weightedSample(items, count, getWeight) {
+    const copy = [...items];
+    const result = [];
+    while (result.length < count && copy.length > 0) {
+      const weighted = copy.map(item => ({ item, weight: Math.max(0.01, getWeight(item)) }));
+      const total = weighted.reduce((sum, entry) => sum + entry.weight, 0);
+      let roll = Math.random() * total;
+      let index = 0;
+      for (let i = 0; i < weighted.length; i += 1) {
+        roll -= weighted[i].weight;
+        if (roll <= 0) {
+          index = i;
+          break;
+        }
+      }
+      const picked = weighted[index].item;
+      result.push(picked);
+      copy.splice(copy.indexOf(picked), 1);
+    }
+    return result;
+  }
+
+  function getUpgradeDefinitionWeight(state, def) {
+    const log = state?.runLog || {};
+    const tagCounts = log.upgradeTagCounts || {};
+    const buildCounts = log.upgradeBuildCounts || {};
+    let weight = 1;
+    weight += (buildCounts[def.family] || 0) * 0.65;
+    for (const tag of def.tags || []) {
+      weight += (tagCounts[tag] || 0) * 0.35;
+    }
+    if (def.key === "repairKit" && state.player.hp < state.player.maxHp * 0.55) weight += 1.3;
+    if (["liftSpeed", "liftField"].includes(def.key) && (state.survivorSignals.length > 0 || state.protectedSurvivors.length > 0)) weight += 0.9;
+    if (["pulseAmplifier", "coolingReflux"].includes(def.key) && state.runLog.enemiesSpawned > 0) weight += 0.65;
+    if (["hazardAi", "pollutedRoute"].includes(def.key) && state.runLog.hazardEntries > 0) weight += 0.55;
+    return weight;
+  }
+
+  function pickUpgradeTier(state) {
+    const analysis = clamp(state?.personnelEffects?.analysisBonus || 0, 0, 4);
+    const weights = UPGRADE_TIER_WEIGHTS.map(entry => ({ ...entry }));
+    for (const entry of weights) {
+      if (entry.key === 1) entry.weight = Math.max(30, entry.weight - analysis * 3.5);
+      if (entry.key === 2) entry.weight = Math.max(22, entry.weight - analysis * 1.5);
+      if (entry.key === 3) entry.weight += analysis * 2.4;
+      if (entry.key === 4) entry.weight += analysis * 1.8;
+      if (entry.key === 5) entry.weight = Math.min(3, entry.weight + analysis * 0.45);
+    }
+    return weightedPick(weights);
+  }
+
+  function createUpgradeVariant(def, tier) {
+    const tierLabel = UPGRADE_TIER_LABELS[tier] || "Ⅰ型";
+    const build = UPGRADE_BUILD_TYPES[def.family] || { name: "混成型" };
+    return {
+      key: `${def.key}:${tier}`,
+      baseKey: def.key,
+      name: `${def.name}【${tierLabel}】`,
+      text: def.tierText[tier],
+      family: def.family,
+      buildName: build.name,
+      tags: [...(def.tags || [])],
+      tier,
+      tierLabel,
+      apply: state => def.apply(state, tier)
     };
-    return candidates
-      .sort((a, b) => (priority[b.key] || 1) - (priority[a.key] || 1))
+  }
+
+  function getUpgradeChoices(state) {
+    const analysis = state?.personnelEffects?.analysisBonus || 0;
+    const poolSize = Math.min(UPGRADE_POOL.length, 5 + Math.floor(clamp(analysis, 0, 4)));
+    const defs = weightedSample(UPGRADE_POOL, poolSize, def => getUpgradeDefinitionWeight(state, def));
+    return defs
+      .map(def => createUpgradeVariant(def, pickUpgradeTier(state)))
+      .sort((a, b) => {
+        if (b.tier !== a.tier) return b.tier - a.tier;
+        return getUpgradeDefinitionWeight(state, UPGRADE_POOL.find(def => def.key === b.baseKey)) - getUpgradeDefinitionWeight(state, UPGRADE_POOL.find(def => def.key === a.baseKey));
+      })
       .slice(0, 3);
+  }
+
+  function recordUpgradeChoice(state, upgrade) {
+    const log = state.runLog;
+    log.upgradesTaken += 1;
+    log.highestUpgradeTier = Math.max(log.highestUpgradeTier || 0, upgrade.tier || 0);
+    log.upgradeBuildCounts[upgrade.family] = (log.upgradeBuildCounts[upgrade.family] || 0) + 1;
+    for (const tag of upgrade.tags || []) {
+      log.upgradeTagCounts[tag] = (log.upgradeTagCounts[tag] || 0) + 1;
+    }
+    if (upgrade.tier === 5) log.upgradeTierFiveCount += 1;
+    log.upgradeHistory.push({
+      name: upgrade.name,
+      baseKey: upgrade.baseKey,
+      family: upgrade.family,
+      buildName: upgrade.buildName,
+      tier: upgrade.tier,
+      tierLabel: upgrade.tierLabel
+    });
+  }
+
+  function getUpgradeSynergyText(state, upgrade) {
+    const familyCount = state.runLog.upgradeBuildCounts?.[upgrade.family] || 0;
+    const sameCount = (state.runLog.upgradeHistory || []).filter(item => item.baseKey === upgrade.baseKey).length;
+    const parts = [];
+    if (familyCount > 0) parts.push(`${upgrade.buildName}${familyCount}取得済み`);
+    if (sameCount > 0) parts.push("同系統重複");
+    return parts.length > 0 ? ` / ${parts.join(" / ")}` : "";
+  }
+
+  function getBuildSummary(log) {
+    if (!log || !log.upgradesTaken) return "未形成";
+    const entries = Object.entries(log.upgradeBuildCounts || {}).filter(([, count]) => count > 0);
+    if (entries.length === 0) return "未形成";
+    entries.sort((a, b) => b[1] - a[1]);
+    const total = entries.reduce((sum, [, count]) => sum + count, 0);
+    const topCount = entries[0][1];
+    const leaders = entries.filter(([, count]) => count === topCount);
+    const hasExperimental = (log.upgradeTierFiveCount || 0) > 0;
+    if (hasExperimental && (leaders.length > 1 || (total >= 3 && topCount <= Math.ceil(total / 2)))) {
+      return "実験型混成";
+    }
+    const label = UPGRADE_BUILD_TYPES[entries[0][0]]?.name || "混成型";
+    return hasExperimental ? `${label}・Ⅴ型混成` : label;
+  }
+
+  function getBuildBreakdownText(log) {
+    const entries = Object.entries(log?.upgradeBuildCounts || {}).filter(([, count]) => count > 0);
+    if (entries.length === 0) return "なし";
+    return entries
+      .sort((a, b) => b[1] - a[1])
+      .map(([family, count]) => `${UPGRADE_BUILD_TYPES[family]?.name || family}: ${count}`)
+      .join(" / ");
+  }
+
+  function getHighestUpgradeTierText(log) {
+    const tier = log?.highestUpgradeTier || 0;
+    return tier > 0 ? UPGRADE_TIER_LABELS[tier] : "なし";
   }
 
   function dist(ax, ay, bx, by) {
     return Math.hypot(ax - bx, ay - by);
+  }
+
+  function isPointInsideBeam(px, py, beam) {
+    const dx = px - beam.x;
+    const dy = py - beam.y;
+    const along = dx * Math.cos(beam.angle) + dy * Math.sin(beam.angle);
+    const side = Math.abs(-dx * Math.sin(beam.angle) + dy * Math.cos(beam.angle));
+    return along > 0 && along < beam.length && side < beam.width / 2;
   }
 
   function circleRect(cx, cy, radius, rect) {
