@@ -21,6 +21,12 @@
     BONUS_HAZARD_COUNT: 2,
     BONUS_ENEMY_CAP: 2,
     BONUS_FAIL_KEEP_RATE: 0.5,
+    STATION_MAX: 3,
+    STATION_COOLDOWN: 60,
+    STATION_UPGRADE_COSTS: {
+      1: 80,
+      2: 160
+    },
     STORAGE_KEY: "ash-city-messenger-save-v1",
     DEBUG_STORAGE_KEY: "ash-city-messenger-debug-config-v1"
   };
@@ -377,43 +383,50 @@
       key: "garage",
       name: "整備工場",
       effect: "機体の最大HPが上がる",
-      detail: level => `最大HP +${level * 8}`
+      detail: level => `最大HP +${level * 8}`,
+      recommendation: "被弾が多い人向け。まず安定して帰還したい時に有効。"
     },
     {
       key: "depot",
       name: "配達局",
       effect: "配達報酬が上がる",
-      detail: level => `報酬 +${level * 5}%`
+      detail: level => `報酬 +${level * 5}%`,
+      recommendation: "配達数を伸ばせる人向け。金額と資材稼ぎを強める。"
     },
     {
       key: "control",
       name: "管制塔",
       effect: "パルス出力と到達距離が少し上がる",
-      detail: level => level === 0 ? "パルス補正なし" : `パルス出力 +${level * 15}% / 到達距離 +${level * 12}%`
+      detail: level => level === 0 ? "パルス補正なし" : `パルス出力 +${level * 15}% / 到達距離 +${level * 12}%`,
+      recommendation: "妨害ユニット対策向け。巨大監視ドローン中のルート確保にも役立つ。"
     },
     {
       key: "medical",
       name: "医療区画",
       effect: "強化ステーションの修理量が上がる",
-      detail: level => level === 0 ? "回復補正なし" : `修理回復 +${level * 8}`
+      detail: level => level === 0 ? "回復補正なし" : `修理回復 +${level * 8}`,
+      recommendation: "長期ランや被弾多めの人向け。ステーション修理の価値が上がる。"
     },
     {
       key: "comms",
       name: "通信設備",
       effect: "通信障害の効果時間が短くなる",
-      detail: level => level === 0 ? "通信補正なし" : `通信障害 -${(level * 1.2).toFixed(1)}秒`
+      detail: level => level === 0 ? "通信補正なし" : `通信障害 -${(level * 1.2).toFixed(1)}秒`,
+      recommendation: "データ端末配送やジャマー対策向け。目的地を見失いにくくする。"
     },
     {
       key: "analysis",
       name: "解析室",
-      effect: "強化ステーション数と改造候補が良くなる",
-      detail: level => level === 0 ? "強化ステーション 1基" : `強化ステーション ${Math.min(3, 1 + level)}基 / 上位型候補補正`
+      effect: "ラン中改造の上位型が出やすくなる",
+      detail: level => level === 0 ? "上位型補正なし" : `上位型候補補正 +${level}`,
+      recommendation: "Ⅰ型〜Ⅴ型ビルドの中核施設。ランごとの方針変化を強める。"
     },
     {
       key: "warehouse",
       name: "倉庫",
       effect: "開始時に積載枠が増える可能性がある",
-      detail: level => level === 0 ? "積載ボーナスなし" : `積載+1の確率 ${level * 25}%`
+      detail: level => level === 0 ? "積載ボーナスなし" : `積載+1の確率 ${level * 25}%`,
+      recommendation: "重量貨物・生存者回収向け。高報酬配送を抱えやすくする。"
     }
   ];
 
@@ -795,10 +808,14 @@
     selectedVehicleLabel: $("#selectedVehicleLabel"),
     vehicleSortieButton: $("#vehicleSortieButton"),
     baseMaterial: $("#baseMaterial"),
+    baseSummaryPanel: $("#baseSummaryPanel"),
+    baseRecommendationPanel: $("#baseRecommendationPanel"),
     bonusPassPanel: $("#bonusPassPanel"),
     facilityList: $("#facilityList"),
+    stationPanel: $("#stationPanel"),
     personnelSummary: $("#personnelSummary"),
     personnelList: $("#personnelList"),
+    baseEffectsPanel: $("#baseEffectsPanel"),
     recordsPanel: $("#recordsPanel"),
     debugPanel: $("#debugPanel"),
     resultPanel: $("#resultPanel"),
@@ -2176,7 +2193,7 @@
     }
 
     getUpgradeStationCount() {
-      return clamp(1 + (this.save.facilities.analysis || 0), 1, 3);
+      return getStationInstallCount(this.save);
     }
 
     collidesWithBuilding(x, y, radius) {
@@ -2721,8 +2738,9 @@
             beam.fired = true;
             beam.ttl = 0.38;
             if (isPointInsideBeam(this.player.x, this.player.y, beam)) {
-              this.player.damage(26, "enemy", this);
+              const applied = this.player.damage(26, "enemy", this);
               this.runLog.bossHits += 1;
+              this.runLog.bossDamageTaken += Math.round(applied);
               this.pushPrompt("監視ドローン砲撃");
             }
           }
@@ -3020,6 +3038,10 @@
       const vehicleStats = normalizeVehicleStats(parsed.vehicleStats);
       const specialDeliveryStats = normalizeSpecialDeliveryStats(parsed.specialDeliveryStats);
       const bonusTickets = clamp(Number(parsed.bonusTickets) || 0, 0, CONFIG.BONUS_TICKET_MAX);
+      const inferredStationLevel = Number.isFinite(parsed.stationLevel)
+        ? parsed.stationLevel
+        : Math.max(1, 1 + (facilities.analysis || 0));
+      const stationLevel = clamp(Math.round(inferredStationLevel), 1, CONFIG.STATION_MAX);
       return {
         ...fallback,
         ...parsed,
@@ -3036,6 +3058,7 @@
         vehicleStats,
         specialDeliveryStats,
         bonusTickets,
+        stationLevel,
         tutorialSeen: Boolean(parsed.tutorialSeen)
       };
     } catch (error) {
@@ -3068,6 +3091,7 @@
       totalSurvivorsRecovered: 0,
       bestSurvivorRarity: "",
       bonusTickets: 0,
+      stationLevel: 1,
       vehicleStats: createDefaultVehicleStats(),
       specialDeliveryStats: createDefaultSpecialDeliveryStats()
     };
@@ -3416,6 +3440,26 @@
     return (save.personnel || []).filter(person => person.assignedFacility).length;
   }
 
+  function getStationInstallCount(save) {
+    return clamp(Math.round(Number(save.stationLevel) || 1), 1, CONFIG.STATION_MAX);
+  }
+
+  function getNextStationCost(save) {
+    const count = getStationInstallCount(save);
+    return CONFIG.STATION_UPGRADE_COSTS[count] ?? null;
+  }
+
+  function getBaseStationRepairAmount(save) {
+    const effects = getPersonnelEffects(save);
+    return 30 + (save.facilities?.medical || 0) * 8 + effects.repairBonus;
+  }
+
+  function getUpperTierBonusText(save) {
+    const effects = getPersonnelEffects(save);
+    const bonus = Math.round(clamp(effects.analysisBonus || 0, 0, 6) * 2);
+    return bonus > 0 ? `+${bonus}%相当` : "なし";
+  }
+
   function autoAssignPersonnel() {
     let moved = 0;
     for (const person of app.save.personnel || []) {
@@ -3452,6 +3496,8 @@
   function getNextGoal(save, result = null) {
     const unassigned = getUnassignedPersonnel(save);
     if (unassigned.length > 0) return `未配置の人員が${unassigned.length}名います`;
+    const stationCost = getNextStationCost(save);
+    if (stationCost !== null && save.materials >= stationCost) return "強化ステーションを増設できます";
     const upgradeable = getUpgradeableFacilities(save);
     if (upgradeable.length > 0) return `${upgradeable[0].name}を強化できます`;
     const garage = FACILITIES.find(facility => facility.key === "garage");
@@ -3486,6 +3532,7 @@
       stationUses: 0,
       stationRepairs: 0,
       stationMods: 0,
+      stationRepairTotal: 0,
       upgradesTaken: 0,
       highestUpgradeTier: 0,
       repairsUsed: 0,
@@ -3517,6 +3564,7 @@
       bossEvents: 0,
       bossLocks: 0,
       bossHits: 0,
+      bossDamageTaken: 0,
       upgradeBuildCounts: {},
       upgradeTagCounts: {},
       upgradeHistory: [],
@@ -3572,7 +3620,7 @@
   }
 
   function getStationRepairAmount(state) {
-    return 30 + (state.save.facilities.medical || 0) * 8 + state.personnelEffects.repairBonus;
+    return getBaseStationRepairAmount(state.save);
   }
 
   function setupEvents() {
@@ -3791,19 +3839,68 @@
   }
 
   function renderBase() {
-    dom.baseMaterial.textContent = `灰街拠点 / 所持資材: ${app.save.materials}`;
+    dom.baseMaterial.textContent = `灰街拠点 / 次のランに向けた準備`;
+    renderBaseSummary();
+    renderBaseRecommendations();
     renderBonusPassPanel();
+    renderFacilities();
+    renderStationManagement();
+    renderPersonnel();
+    renderBaseEffects();
+  }
+
+  function renderBaseSummary() {
+    if (!dom.baseSummaryPanel) return;
+    const personnel = app.save.personnel || [];
+    const assigned = getAssignedPersonnelCount(app.save);
+    const unassigned = getUnassignedPersonnel(app.save).length;
+    const stationCount = getStationInstallCount(app.save);
+    const facilityUpgrades = FACILITIES.reduce((sum, facility) => sum + (app.save.facilities?.[facility.key] || 0), 0);
+    dom.baseSummaryPanel.innerHTML = `
+      <div class="base-card">
+        <strong>拠点サマリー</strong>
+        <div class="stat-grid compact-stats">
+          <div><span>所持資材</span><strong>${app.save.materials}</strong></div>
+          <div><span>総獲得資材</span><strong>${app.save.totalMaterialsEarned || app.save.materials}</strong></div>
+          <div><span>施設強化</span><strong>${facilityUpgrades}回</strong></div>
+          <div><span>人員</span><strong>配置中${assigned}名 / 未配置${unassigned}名</strong></div>
+          <div><span>強化ステーション</span><strong>${stationCount}基</strong></div>
+          <div><span>最高配達数</span><strong>${app.save.bestDeliveries}件</strong></div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderBaseRecommendations() {
+    if (!dom.baseRecommendationPanel) return;
+    const recommendations = getBaseRecommendations(app.save);
+    dom.baseRecommendationPanel.innerHTML = `
+      <div class="base-card recommendation-card">
+        <strong>次のおすすめ</strong>
+        <ul class="recommendation-list">
+          ${recommendations.map(item => `<li>${item}</li>`).join("")}
+        </ul>
+      </div>
+    `;
+  }
+
+  function renderFacilities() {
     dom.facilityList.innerHTML = "";
     for (const facility of FACILITIES) {
       const level = app.save.facilities[facility.key] || 0;
       const cost = getFacilityCost(level);
       const card = document.createElement("div");
       const canUpgrade = cost !== null && app.save.materials >= cost;
+      const nextText = cost === null ? "最大レベル" : facility.detail(level + 1);
       card.className = `facility-card${canUpgrade ? " upgrade-ready" : ""}`;
       card.innerHTML = `
         <strong>${facility.name} Lv${level}${canUpgrade ? `<span class="status-badge">強化可能</span>` : ""}</strong>
         <span>${facility.effect}</span>
-        <span>${facility.detail(level)}</span>
+        <div class="facility-effect-grid">
+          <span>現在効果: ${facility.detail(level)}</span>
+          <span>次レベル: ${nextText}</span>
+        </div>
+        <span class="usage-note">おすすめ: ${facility.recommendation || "次回ランの安定度を上げます。"}</span>
         <div class="facility-footer">
           <span>${cost === null ? "最大レベル" : `次の費用: 資材${cost}`}</span>
           <button ${canUpgrade ? "" : "disabled"}>${cost === null ? "完了" : "強化"}</button>
@@ -3820,7 +3917,6 @@
       });
       dom.facilityList.appendChild(card);
     }
-    renderPersonnel();
   }
 
   function renderBonusPassPanel() {
@@ -3849,6 +3945,84 @@
       app.pendingRunMode = "bonus";
       showScreen("vehicle");
     });
+  }
+
+  function renderStationManagement() {
+    if (!dom.stationPanel) return;
+    const count = getStationInstallCount(app.save);
+    const nextCost = getNextStationCost(app.save);
+    const canExpand = nextCost !== null && app.save.materials >= nextCost;
+    dom.stationPanel.innerHTML = `
+      <div class="base-card station-management-card${canExpand ? " upgrade-ready" : ""}">
+        <strong>強化ステーション ${count}/${CONFIG.STATION_MAX}基${canExpand ? `<span class="status-badge">増設可能</span>` : ""}</strong>
+        <div class="stat-grid compact-stats">
+          <div><span>リキャスト</span><strong>${CONFIG.STATION_COOLDOWN}秒</strong></div>
+          <div><span>修理回復量</span><strong>${getBaseStationRepairAmount(app.save)}</strong></div>
+          <div><span>改造候補</span><strong>3択</strong></div>
+          <div><span>上位型補正</span><strong>${getUpperTierBonusText(app.save)}</strong></div>
+        </div>
+        <span class="usage-note">ラン中に修理か改造を選べる拠点設備です。増設すると寄り道の選択肢が増えます。</span>
+        <div class="facility-footer">
+          <span>${nextCost === null ? "最大設置数です" : `次の増設費用: 資材${nextCost}`}</span>
+          <button data-expand-station ${canExpand ? "" : "disabled"}>${nextCost === null ? "増設完了" : "ステーション増設"}</button>
+        </div>
+      </div>
+    `;
+    dom.stationPanel.querySelector("[data-expand-station]").addEventListener("click", () => {
+      if (!canExpand) return;
+      app.save.materials -= nextCost;
+      app.save.stationLevel = Math.min(CONFIG.STATION_MAX, count + 1);
+      saveData();
+      renderBase();
+      renderTitle();
+    });
+  }
+
+  function renderBaseEffects() {
+    if (!dom.baseEffectsPanel) return;
+    const effects = getBaseEffectList(app.save);
+    dom.baseEffectsPanel.innerHTML = `
+      <div class="base-card">
+        <strong>現在の拠点効果</strong>
+        <div class="effect-list">
+          ${effects.map(effect => `<span>${effect}</span>`).join("")}
+        </div>
+      </div>
+    `;
+  }
+
+  function getBaseRecommendations(save) {
+    const list = [];
+    const unassigned = getUnassignedPersonnel(save).length;
+    const upgradeable = getUpgradeableFacilities(save);
+    const stationCost = getNextStationCost(save);
+    if (unassigned > 0) list.push(`未配置の人員が${unassigned}名います。施設に配置すると次回ランが有利になります。`);
+    if (stationCost !== null && save.materials >= stationCost) list.push("強化ステーションを増設できます。ラン中の修理・改造が安定します。");
+    if (upgradeable.length > 0) list.push(`資材が足りています。${upgradeable[0].name}などを強化できます。`);
+    if ((save.facilities.analysis || 0) < 2) list.push("解析室を強化すると、上位型の改造が出やすくなります。");
+    if ((save.facilities.warehouse || 0) < 1) list.push("倉庫を強化すると、積載ボーナスで重量貨物や生存者回収を狙いやすくなります。");
+    if (list.length === 0) list.push("次のランでは高報酬配送か生存者回収を狙い、帰還判断を早めに決めましょう。");
+    return list.slice(0, 3);
+  }
+
+  function getBaseEffectList(save) {
+    const effects = getPersonnelEffects(save);
+    const facility = save.facilities || {};
+    const list = [
+      `最大HP +${(facility.garage || 0) * 8 + effects.maxHpBonus}`,
+      `配達報酬 +${Math.round((facility.depot || 0) * 5 + effects.rewardBonus * 100)}%`,
+      `パルス出力 +${(facility.control || 0) * 15}%`,
+      `パルス到達距離 +${(facility.control || 0) * 12}%`,
+      `修理回復 +${(facility.medical || 0) * 8 + effects.repairBonus}`,
+      `通信障害 -${((facility.comms || 0) * 1.2 + effects.commsReduction).toFixed(1)}秒`,
+      `上位型出現率 ${getUpperTierBonusText(save)}`,
+      `開始時積載+1発生率 ${Math.round(Math.min(1, (facility.warehouse || 0) * 0.25 + effects.warehouseChanceBonus) * 100)}%`,
+      `強化ステーション設置数 ${getStationInstallCount(save)}基`
+    ];
+    if (effects.warningBonus > 0) list.push(`予告系イベント +${effects.warningBonus.toFixed(1)}秒`);
+    if (effects.radarBonus > 0) list.push(`レーダー表示範囲 +${Math.round(effects.radarBonus)}m`);
+    if (effects.hazardClarity > 0) list.push(`危険区域視認性 +${Math.round(effects.hazardClarity * 100)}%`);
+    return list;
   }
 
   function renderPersonnel() {
@@ -3893,10 +4067,39 @@
       dom.personnelList.appendChild(notice);
     }
 
-    for (const survivor of personnel) {
+    const slots = document.createElement("div");
+    slots.className = "facility-card capacity-card";
+    slots.innerHTML = `
+      <strong>配置枠</strong>
+      <div class="effect-list">
+        ${PERSONNEL_FACILITIES.map(facility => {
+          const capacity = getFacilityAssignmentCapacity(app.save, facility.key);
+          const used = getAssignedCount(app.save, facility.key);
+          return `<span>${facility.name}: ${used}/${capacity}${capacity === 0 ? " / Lv1で解放" : ""}</span>`;
+        }).join("")}
+      </div>
+    `;
+    dom.personnelList.appendChild(slots);
+
+    const sortedPersonnel = [...personnel].sort((a, b) => {
+      if (!a.assignedFacility && b.assignedFacility) return -1;
+      if (a.assignedFacility && !b.assignedFacility) return 1;
+      return getFacilityName(a.assignedFacility).localeCompare(getFacilityName(b.assignedFacility), "ja") || b.aptitude - a.aptitude;
+    });
+
+    let currentGroup = "";
+    for (const survivor of sortedPersonnel) {
       const role = getSurvivorRole(survivor.role);
       const assignedFacility = survivor.assignedFacility ? getFacilityName(survivor.assignedFacility) : "未配置";
       const recommended = role ? getFacilityName(role.facility) : "灰街拠点";
+      const groupLabel = survivor.assignedFacility ? assignedFacility : "未配置人員";
+      if (groupLabel !== currentGroup) {
+        currentGroup = groupLabel;
+        const heading = document.createElement("div");
+        heading.className = "personnel-group-label";
+        heading.textContent = groupLabel;
+        dom.personnelList.appendChild(heading);
+      }
       const card = document.createElement("div");
       card.className = `facility-card personnel-card${survivor.assignedFacility ? "" : " unassigned-person"}`;
       const assignmentButtons = PERSONNEL_FACILITIES.map(facility => {
@@ -3904,16 +4107,17 @@
         const used = getAssignedCount(app.save, facility.key, survivor.id);
         const active = survivor.assignedFacility === facility.key;
         const canAssign = capacity > 0 && (active || used < capacity);
+        const reason = capacity <= 0 ? "施設Lv0のため配置不可" : used >= capacity && !active ? "配置枠が満員" : "";
         const label = active ? `${facility.name} 配置中` : `${facility.name} ${used}/${capacity}`;
-        return `<button class="mini-button" data-assign="${facility.key}" ${canAssign ? "" : "disabled"}>${label}</button>`;
+        return `<button class="mini-button" data-assign="${facility.key}" title="${reason}" ${canAssign ? "" : "disabled"}>${label}</button>`;
       }).join("");
 
       card.innerHTML = `
         <strong>${survivor.name} <span class="rarity rarity-${survivor.rarity}">${survivor.rarity}</span>${survivor.assignedFacility ? "" : `<span class="status-badge warn">未配置</span>`}</strong>
-        <span>${role?.name || "人員"} / 適性 ${survivor.aptitude} / 特性 ${survivor.trait}</span>
+        <span>職能: ${role?.name || "人員"} / 適性 ${survivor.aptitude} / 特性 ${survivor.trait}</span>
         <span>現在の配置先: ${assignedFacility}</span>
         <span>推奨: ${recommended}</span>
-        <span>${describeSurvivorPlacement(survivor)}</span>
+        <span>配置効果: ${describeSurvivorPlacement(survivor)}</span>
         <div class="personnel-actions">
           ${assignmentButtons}
           <button class="mini-button" data-release ${survivor.assignedFacility ? "" : "disabled"}>解除</button>
@@ -4339,30 +4543,33 @@
     app.mode = "station";
     dom.upgradeOverlay.hidden = false;
     dom.upgradeTitle.textContent = "強化ステーション";
-    dom.upgradeIntro.textContent = "修理するか、改造候補を呼び出します。使用後は60秒間再起動します。";
+    dom.upgradeIntro.textContent = `修理するか、改造候補を呼び出します。使用後は${CONFIG.STATION_COOLDOWN}秒間再起動します。`;
     dom.upgradeChoices.innerHTML = "";
     const repairAmount = getStationRepairAmount(state);
     const repair = document.createElement("button");
     repair.className = "choice-card station-choice";
     repair.innerHTML = `
-      <span class="choice-meta">即時支援 / 再起動60秒</span>
+      <span class="choice-meta">即時支援 / 再起動${CONFIG.STATION_COOLDOWN}秒</span>
       <strong>修理</strong>
       <span>機体HPを${repairAmount}回復します。医療区画と医療士の補正込み。</span>
     `;
     repair.addEventListener("click", () => {
+      const beforeHp = state.player.hp;
       state.player.heal(repairAmount);
+      const recovered = Math.round(state.player.hp - beforeHp);
       state.runLog.repairsUsed += 1;
       state.runLog.stationUses += 1;
       state.runLog.stationRepairs += 1;
-      station.cooldown = 60;
-      state.pushMessage(`強化ステーション: 修理 +${repairAmount}`);
+      state.runLog.stationRepairTotal += recovered;
+      station.cooldown = CONFIG.STATION_COOLDOWN;
+      state.pushMessage(`強化ステーション: 修理 +${recovered}`);
       dom.upgradeOverlay.hidden = true;
       app.mode = "playing";
     });
     const mod = document.createElement("button");
     mod.className = "choice-card station-choice";
     mod.innerHTML = `
-      <span class="choice-meta">ラン中改造 / 再起動60秒</span>
+      <span class="choice-meta">ラン中改造 / 再起動${CONFIG.STATION_COOLDOWN}秒</span>
       <strong>改造</strong>
       <span>Ⅰ型〜Ⅴ型の改造候補を3つ表示します。解析室と解析員で上位型が出やすくなります。</span>
     `;
@@ -4374,7 +4581,7 @@
     app.mode = "upgrade";
     dom.upgradeOverlay.hidden = false;
     dom.upgradeTitle.textContent = "ラン中改造";
-    dom.upgradeIntro.textContent = "1つ選ぶと効果が即時適用され、ステーションは60秒間再起動します。";
+    dom.upgradeIntro.textContent = `1つ選ぶと効果が即時適用され、ステーションは${CONFIG.STATION_COOLDOWN}秒間再起動します。`;
     dom.upgradeChoices.innerHTML = "";
     const choices = getUpgradeChoices(state);
     for (const upgrade of choices) {
@@ -4390,7 +4597,7 @@
         upgrade.apply(state);
         recordUpgradeChoice(state, upgrade);
         if (station) {
-          station.cooldown = 60;
+          station.cooldown = CONFIG.STATION_COOLDOWN;
           state.runLog.stationUses += 1;
           state.runLog.stationMods += 1;
         }
@@ -4601,7 +4808,12 @@
       result.tutorialResultHint ? `<span class="notice-chip">資材と人員で灰街拠点を強化しよう</span>` : ""
     ].filter(Boolean).join("");
     const specialLogHtml = renderSpecialDeliveryLogHtml(result.runLog);
+    const upgradeListHtml = renderUpgradeResultHtml(result.runLog);
+    const stationRecordHtml = renderStationResultHtml(result.runLog);
+    const bossEventHtml = renderBossEventLogHtml(result.runLog);
     const runLogHtml = renderRunLogHtml(result.runLog);
+    const playTendency = getPlayTendency(result);
+    const resultAdvice = getResultAdvice(result);
     dom.retryButton.textContent = "同じ機体で再挑戦";
     dom.retryButton.disabled = false;
     dom.selectVehicleButton.textContent = "機体を選ぶ";
@@ -4625,11 +4837,19 @@
       </div>
       ${bestUpdateHtml}
       ${buildCalloutHtml}
+      <div class="result-story-card">
+        <strong>今回のプレイ傾向: ${playTendency.title}</strong>
+        <span>${playTendency.text}</span>
+      </div>
       <p>${result.returned ? `帰還ボーナス +${result.bonus}` : `帰還できなかったため今回の報酬持ち帰りは${Math.round((result.failedKeepRate || 0.5) * 100)}%です。`}</p>
       ${survivorResult}
+      ${upgradeListHtml}
+      ${stationRecordHtml}
       ${specialLogHtml}
+      ${bossEventHtml}
       ${runLogHtml}
       ${noticeHtml ? `<div class="notice-list">${noticeHtml}</div>` : ""}
+      <div class="next-goal"><strong>次回へのヒント</strong><span>${resultAdvice}</span></div>
       <div class="next-goal"><strong>次の目標</strong><span>${result.nextGoal}</span></div>
     `;
   }
@@ -4667,6 +4887,97 @@
     `;
   }
 
+  function renderUpgradeResultHtml(log) {
+    const history = log?.upgradeHistory || [];
+    if (history.length === 0) {
+      return `
+        <div class="run-log">
+          <strong>取得した強化</strong>
+          <p>今回は強化を取得していません。強化ステーションに寄ると、後半の帰還や高報酬配送が安定します。</p>
+        </div>
+      `;
+    }
+    return `
+      <div class="run-log upgrade-result-list${(log.upgradeTierFiveCount || 0) > 0 ? " experimental-callout" : ""}">
+        <strong>取得した強化</strong>
+        <div class="result-mini-summary">
+          <span>今回の最高強化: ${getHighestUpgradeTierText(log)}</span>
+          <span>取得強化数: ${history.length}</span>
+          ${(log.upgradeTierFiveCount || 0) > 0 ? `<span>Ⅴ型取得: ${log.upgradeTierFiveCount}個</span>` : ""}
+        </div>
+        <div class="upgrade-history-list">
+          ${history.map(item => `
+            <div class="upgrade-history-item${item.tier === 5 ? " experimental" : ""}">
+              <strong>${item.name}</strong>
+              <span>${item.text || `${item.buildName || "改造"} / ${item.tierLabel || ""}`}</span>
+            </div>
+          `).join("")}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderStationResultHtml(log) {
+    if (!log) return "";
+    return `
+      <div class="run-log station-result-log">
+        <strong>強化ステーション使用記録</strong>
+        <div class="log-grid">
+          <span>使用回数: ${log.stationUses || 0}回</span>
+          <span>修理: ${log.stationRepairs || 0}回</span>
+          <span>改造: ${log.stationMods || 0}回</span>
+          <span>総回復量: ${log.stationRepairTotal || 0}</span>
+          <span>取得した改造数: ${log.upgradesTaken || 0}</span>
+          <span>最高型: ${getHighestUpgradeTierText(log)}</span>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderBossEventLogHtml(log) {
+    if (!log || !(log.bossEvents || log.bossLocks || log.bossHits)) return "";
+    const avoidCount = Math.max(0, (log.bossLocks || 0) - (log.bossHits || 0));
+    return `
+      <div class="run-log boss-event-log">
+        <strong>大型イベントログ</strong>
+        <div class="log-grid">
+          <span>巨大監視ドローン遭遇: ${log.bossEvents || 0}回</span>
+          <span>警告攻撃回避: ${avoidCount}回</span>
+          <span>被弾: ${log.bossHits || 0}回</span>
+          <span>大型イベント被ダメージ: ${log.bossDamageTaken || 0}</span>
+        </div>
+      </div>
+    `;
+  }
+
+  function getPlayTendency(result) {
+    const log = result?.runLog || {};
+    if ((log.coolingDelivered || 0) >= 2 || (log.coolingHighValue || 0) >= 1) return { title: "冷却便ランナー", text: "冷却品を早く届ける判断が収益につながりました。高速配送型の強化と相性が良い流れです。" };
+    if ((log.heavyDelivered || 0) >= 1) return { title: "重量輸送屋", text: "重量貨物で大きく稼ぐルートでした。積載輸送型や倉庫強化を伸ばすと次回も狙いやすくなります。" };
+    if ((log.fragilePerfect || 0) >= 1) return { title: "壊れ物職人", text: "壊れ物を無傷で届けています。危険回避とルート選びが報酬に直結しています。" };
+    if ((log.survivorsProtected || 0) >= 1) return { title: "救助優先ルート", text: "生存者回収を軸にしたランでした。保護後は早めの帰還判断が人員加入を安定させます。" };
+    if ((log.stationUses || 0) >= 3) return { title: "強化ステーション常連", text: "ステーションを積極的に使えています。修理と改造の選択がラン後半の安定につながります。" };
+    if ((log.hazardEntries || 0) >= 5) return { title: "危険区域突破型", text: "危険区域を強引に抜ける場面が多いランでした。危険突破型の強化を取ると近道として使いやすくなります。" };
+    if ((log.enemiesDisabled || 0) >= 4) return { title: "妨害機掃討型", text: "妨害ユニットを処理してルートを作れています。パルス強化や冷却還流と相性が良いです。" };
+    if (result?.returned && log.returnSecondsLeft != null && log.returnSecondsLeft <= 15) return { title: "ギリギリ帰還", text: "最後まで欲張ったランです。次回は残り60秒の時点で帰還ルートを意識すると安定します。" };
+    if ((log.deliveries || 0) === 0) return { title: "空荷帰還", text: "配達より生存や偵察を優先したランです。近距離の通常荷物から始めると安定して資材を稼げます。" };
+    if ((log.deliveries || 0) >= 7) return { title: "灰街最速便", text: "配達テンポが高いランでした。報酬交渉術や連続配送系の強化でさらに伸ばせます。" };
+    return { title: result?.buildSummary || "灰街配達員", text: "配達と帰還のバランスを取ったランでした。次は取得した強化に合わせて荷物種別を寄せると方針が出やすくなります。" };
+  }
+
+  function getResultAdvice(result) {
+    const log = result?.runLog || {};
+    if ((log.upgradesTaken || 0) <= 0) return "次回は強化ステーションに寄ると、後半の帰還や高報酬配送が安定します。";
+    if ((log.stationRepairs || 0) >= 2 || (log.damageTaken || 0) >= 60) return "損傷が多めです。危険区域を避けるルートか、医療区画と整備工場の強化を優先すると伸びます。";
+    if ((log.deliveries || 0) <= 1) return "近距離の通常荷物を先に拾うと、安定して資材と報酬を稼げます。";
+    if ((log.survivorsProtected || 0) > 0 && (log.survivorsJoined || 0) === 0) return "生存者保護後は無理に追加配送せず、早めの帰還を狙うと加入が安定します。";
+    if ((log.upgradeTierFiveCount || 0) > 0) return "Ⅴ型強化を軸にすると、普段と違うルート選択や荷物選びができます。";
+    if ((log.bossEvents || 0) > 0 && (log.bossHits || 0) > 0) return "巨大監視ドローンの警告線が出たら、直進をやめて横に逃げるルートを優先しましょう。";
+    if ((log.coolingDelivered || 0) > 0) return "冷却品を高価値で届けられています。高速配送型の強化を重ねると収益がさらに伸びます。";
+    if ((log.heavyDelivered || 0) > 0) return "重量貨物を運べています。倉庫や追加積載系の強化で、高報酬をまとめて狙いやすくなります。";
+    return "今回の傾向に合わせて、次は強化ステーションで同じ系統の改造を重ねるとビルド感が出ます。";
+  }
+
   function renderSpecialDeliveryLogHtml(log) {
     if (!log || !(log.specialDelivered || log.medicalDelivered || log.dataDelivered)) return "";
     const coolingAverage = log.coolingDelivered > 0
@@ -4685,9 +4996,14 @@
           <span>壊れ物無傷: ${log.fragilePerfect}件</span>
           <span>壊れ物損傷: ${log.fragileDamage}回</span>
           <span>冷却品納品: ${log.coolingDelivered}件</span>
+          <span>冷却品80%以上: ${log.coolingHighValue || 0}件</span>
           <span>冷却品平均価値: ${coolingAverage || "-"}%</span>
           <span>重量貨物納品: ${log.heavyDelivered}件</span>
           <span>重量貨物収益: ${log.heavyMoney}</span>
+          <span>壊れ物無傷ボーナス: 資材+${log.fragileBonusMaterials || 0}</span>
+          <span>冷却品高価値ボーナス: 資材+${log.coolingBonusMaterials || 0}</span>
+          <span>重量貨物ボーナス: 資材+${log.heavyBonusMaterials || 0}</span>
+          <span>データ無汚染ボーナス: 資材+${log.dataBonusMaterials || 0}</span>
           <span>特殊配送ボーナス資材: ${bonusMaterials}</span>
         </div>
       </div>
@@ -4744,6 +5060,7 @@
             <span>監視回避: ${(log.bossEvents || 0) > 0 && (log.bossHits || 0) === 0 ? "成功" : ((log.bossEvents || 0) > 0 ? "被弾あり" : "-")}</span>
             <span>監視ロックオン: ${log.bossLocks || 0}回</span>
             <span>監視砲撃被弾: ${log.bossHits || 0}回</span>
+            <span>監視砲撃損傷: ${log.bossDamageTaken || 0}</span>
             ${upgradeRows}
             ${eventRows || "<span>イベント内訳なし</span>"}
           </div>
@@ -5966,6 +6283,7 @@
       baseKey: upgrade.baseKey,
       family: upgrade.family,
       buildName: upgrade.buildName,
+      text: upgrade.text,
       tier: upgrade.tier,
       tierLabel: upgrade.tierLabel
     });
