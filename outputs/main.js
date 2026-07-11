@@ -7,6 +7,9 @@
     EVENT_INTERVAL: 25,
     MAP_W: 1800,
     MAP_H: 2400,
+    TILE_SIZE: 32,
+    EMP_BASE_CHARGES: 3,
+    EMP_STOP_DURATION: 4.5,
     SPEED_SCALE: 72,
     HAZARD_DPS: 10,
     ENEMY_DAMAGE: 10,
@@ -91,9 +94,9 @@
       skillText: "2秒間、推進出力を上げて移動速度が大きく上がる",
       skillCooldown: 10,
       skillDuration: 2,
-      attackName: "指向性パルス",
-      attackText: "前方の妨害機を短い到達距離でまとめて弾く",
-      attackCooldown: 0.85
+      attackName: "EMP",
+      attackText: "前方範囲の妨害ユニットを数秒間停止させる",
+      attackCooldown: 0.35
     },
     beta: {
       id: "beta",
@@ -107,9 +110,9 @@
       skillText: "3秒間、防護装甲を展開して受ける損傷を大きく減らす",
       skillCooldown: 12,
       skillDuration: 3,
-      attackName: "広域ショック",
-      attackText: "周囲の妨害機を押し返す近距離パルス",
-      attackCooldown: 1.35
+      attackName: "EMP",
+      attackText: "周囲の妨害ユニットを数秒間停止させる広域EMP",
+      attackCooldown: 0.35
     },
     gamma: {
       id: "gamma",
@@ -123,9 +126,9 @@
       skillText: "2.5秒間、高度を上げて危険区域の影響を大きく抑える",
       skillCooldown: 9,
       skillDuration: 2.5,
-      attackName: "直進パルス",
-      attackText: "前方へ到達距離の長いパルス弾を放つ",
-      attackCooldown: 0.75
+      attackName: "EMP",
+      attackText: "前方長距離の妨害ユニットを数秒間停止させる",
+      attackCooldown: 0.35
     }
   };
 
@@ -396,8 +399,8 @@
     {
       key: "control",
       name: "管制塔",
-      effect: "パルス出力と到達距離が少し上がる",
-      detail: level => level === 0 ? "パルス補正なし" : `パルス出力 +${level * 15}% / 到達距離 +${level * 12}%`,
+      effect: "EMP停止時間と効果範囲が少し上がる",
+      detail: level => level === 0 ? "EMP補正なし" : `EMP停止時間 +${level * 8}% / 効果範囲 +${level * 12}%`,
       recommendation: "妨害ユニット対策向け。巨大監視ドローン中のルート確保にも役立つ。"
     },
     {
@@ -652,8 +655,8 @@
         1: "スキルクールタイム-8%",
         2: "スキルクールタイム-15%",
         3: "スキルクールタイム-22%",
-        4: "スキルクールタイム-28%、パルス命中でさらに短縮",
-        5: "実験型冷却炉。スキル冷却-38%、パルス命中短縮大。ただし最大HP-8"
+        4: "スキルクールタイム-28%、EMP停止時にさらに短縮",
+        5: "実験型冷却炉。スキル冷却-38%、EMP停止時の短縮大。ただし最大HP-8"
       },
       apply: (state, tier) => {
         state.player.cooldownMultiplier *= { 1: 0.92, 2: 0.85, 3: 0.78, 4: 0.72, 5: 0.62 }[tier];
@@ -663,23 +666,24 @@
     },
     {
       key: "pulseAmplifier",
-      name: "パルス増幅器",
+      name: "EMP増幅器",
       family: "combat",
       tags: ["combat"],
       tierText: {
-        1: "パルス出力+10%",
-        2: "パルス出力+18%",
-        3: "パルス出力+25%、到達距離+10%",
-        4: "パルス命中時、スキルクールタイムを短縮",
-        5: "命中時に小爆発。ただしパルスクールタイム+20%"
+        1: "EMP効果範囲+10%",
+        2: "EMP効果範囲+18%",
+        3: "EMP効果範囲+25%、停止時間+10%",
+        4: "EMP停止時、スキルクールタイムを短縮",
+        5: "EMP最大回数+1、停止時間+20%。ただしEMP再起動時間+20%"
       },
       apply: (state, tier) => {
-        state.player.attackDamageBonus *= { 1: 1.1, 2: 1.18, 3: 1.25, 4: 1.3, 5: 1.42 }[tier];
-        if (tier >= 3) state.player.attackRangeBonus *= tier === 5 ? 1.18 : 1.1;
+        state.player.empRangeBonus *= { 1: 1.1, 2: 1.18, 3: 1.25, 4: 1.3, 5: 1.34 }[tier];
+        if (tier >= 3) state.player.empDurationBonus *= tier === 5 ? 1.2 : 1.1;
         if (tier >= 4) state.pulseSkillCooldownReduction += tier === 5 ? 1.0 : 0.7;
         if (tier === 5) {
+          state.player.empMaxCharges += 1;
+          state.player.empCharges += 1;
           state.pulseExplosionRadius = Math.max(state.pulseExplosionRadius, 62);
-          state.pulseExplosionDamage = Math.max(state.pulseExplosionDamage, 12);
           state.player.attackCooldownMultiplier *= 1.2;
         }
       }
@@ -730,11 +734,11 @@
       family: "combat",
       tags: ["combat", "cooldown"],
       tierText: {
-        1: "パルス命中時スキル冷却-0.4秒",
-        2: "パルス命中時スキル冷却-0.7秒",
-        3: "パルス命中時スキル冷却-1秒",
-        4: "パルス命中時スキル冷却-1.4秒、撃破後加速",
-        5: "旧軍用還流器。命中時冷却-2秒。ただしパルスクールタイム+12%"
+        1: "EMP停止時スキル冷却-0.4秒",
+        2: "EMP停止時スキル冷却-0.7秒",
+        3: "EMP停止時スキル冷却-1秒",
+        4: "EMP停止時スキル冷却-1.4秒、停止後に短時間加速",
+        5: "旧軍用還流器。EMP停止時冷却-2秒。ただしEMP再起動時間+12%"
       },
       apply: (state, tier) => {
         state.pulseSkillCooldownReduction += { 1: 0.4, 2: 0.7, 3: 1, 4: 1.4, 5: 2 }[tier];
@@ -770,7 +774,7 @@
         2: "中断を1回防ぎ、回収時間-8%",
         3: "中断を1回防ぎ、保護中の速度低下を軽減",
         4: "中断を2回防ぎ、回収中の移動低下を少し軽減",
-        5: "試作防護フィールド。中断を2回防ぐ。ただしパルスクールタイム+10%"
+        5: "試作防護フィールド。中断を2回防ぐ。ただしEMP再起動時間+10%"
       },
       apply: (state, tier) => {
         state.liftInterruptShield += tier >= 4 ? 2 : 1;
@@ -834,6 +838,7 @@
     hudDeliveries: $("#hudDeliveries"),
     hudHp: $("#hudHp"),
     hudCargo: $("#hudCargo"),
+    hudEmp: $("#hudEmp"),
     hudAreaStatus: $("#hudAreaStatus"),
     jobPanel: $("#jobPanel"),
     attackButton: $("#attackButton"),
@@ -846,6 +851,8 @@
   };
 
   const ctx = dom.canvas.getContext("2d");
+  ctx.imageSmoothingEnabled = false;
+  const graphics = createGraphicsSystem(window.ASH_CITY_GRAPHICS || {});
 
   const app = {
     save: loadSave(),
@@ -1107,6 +1114,8 @@
       this.skillCooldown = 0;
       this.skillActive = 0;
       this.attackCooldown = 0;
+      this.empMaxCharges = CONFIG.EMP_BASE_CHARGES;
+      this.empCharges = this.empMaxCharges;
       this.tempSpeedTimer = 0;
       this.tempSpeedMultiplier = 1;
       this.speedBonus = 1;
@@ -1133,8 +1142,8 @@
       this.damageGuardTimer = 0;
       this.deathSaveCharges = 0;
       const controlLevel = save.facilities.control || 0;
-      this.attackDamageBonus = 1 + controlLevel * 0.15;
-      this.attackRangeBonus = 1 + controlLevel * 0.12;
+      this.empDurationBonus = 1 + controlLevel * 0.08;
+      this.empRangeBonus = 1 + controlLevel * 0.12;
       this.facing = { x: 0, y: -1 };
     }
 
@@ -1241,29 +1250,33 @@
 
     attack(state) {
       if (this.attackCooldown > 0) return false;
+      if (this.empCharges <= 0) {
+        state.pushPrompt("EMP残数なし");
+        return false;
+      }
       const heavyCooldown = this.getCargo(state).some(job => job.type.special === "heavy") ? 1.12 : 1;
       this.attackCooldown = this.vehicle.attackCooldown * heavyCooldown * this.attackCooldownMultiplier;
+      this.empCharges -= 1;
       state.runLog.pulseUsed += 1;
+      state.runLog.empUsed += 1;
       const dir = normalize(this.facing);
+      const duration = state.getEmpStopDuration();
 
       if (this.vehicleId === "alpha") {
-        const range = 138 * this.attackRangeBonus;
-        const damage = 24 * this.attackDamageBonus;
-        const count = state.hitEnemiesInCone(this.x, this.y, dir, range, Math.PI / 3, damage);
+        const range = 150 * this.empRangeBonus;
+        const count = state.empEnemiesInCone(this.x, this.y, dir, range, Math.PI / 3, duration);
         state.attackEffects.push({ type: "cone", x: this.x, y: this.y, dir, range, ttl: 0.16, color: "#48d6ee" });
-        state.pushPrompt(count > 0 ? `指向性パルス ${count}機命中` : "指向性パルス");
+        state.pushPrompt(count > 0 ? `EMP ${count}機停止` : "EMP放出");
       } else if (this.vehicleId === "beta") {
-        const radius = 92 * this.attackRangeBonus;
-        const damage = 20 * this.attackDamageBonus;
-        const count = state.hitEnemiesInRadius(this.x, this.y, radius, damage);
+        const radius = 118 * this.empRangeBonus;
+        const count = state.empEnemiesInRadius(this.x, this.y, radius, duration);
         state.attackEffects.push({ type: "ring", x: this.x, y: this.y, radius, ttl: 0.18, color: "#ffd36d" });
-        state.pushPrompt(count > 0 ? `広域ショック ${count}機命中` : "広域ショック");
+        state.pushPrompt(count > 0 ? `EMP ${count}機停止` : "EMP放出");
       } else {
-        const range = 290 * this.attackRangeBonus;
-        const damage = 28 * this.attackDamageBonus;
-        state.projectiles.push(new Projectile(this.x, this.y, dir, range, damage));
-        state.attackEffects.push({ type: "flash", x: this.x, y: this.y, dir, range: 42, ttl: 0.12, color: "#9ee7ff" });
-        state.pushPrompt("直進パルス");
+        const range = 310 * this.empRangeBonus;
+        const count = state.empEnemiesInCone(this.x, this.y, dir, range, Math.PI / 5, duration);
+        state.attackEffects.push({ type: "cone", x: this.x, y: this.y, dir, range, ttl: 0.16, color: "#9ee7ff" });
+        state.pushPrompt(count > 0 ? `EMP ${count}機停止` : "EMP放出");
       }
       return true;
     }
@@ -1598,6 +1611,27 @@
     }
   }
 
+  function isEmpStopped(unit) {
+    return (unit?.empTimer || 0) > 0;
+  }
+
+  function tickEmpStop(unit, dt) {
+    unit.empTimer = Math.max(0, (unit.empTimer || 0) - dt);
+    unit.disabled = unit.empTimer > 0;
+    return unit.disabled;
+  }
+
+  function applyEmpToEnemy(enemy, duration, state) {
+    if (!enemy || enemy.dead || enemy.isDead?.()) return false;
+    enemy.empTimer = Math.max(enemy.empTimer || 0, duration);
+    enemy.disabled = true;
+    if ("alertTimer" in enemy) enemy.alertTimer = 0;
+    if ("dashTimer" in enemy) enemy.dashTimer = 0;
+    if ("hitCooldown" in enemy) enemy.hitCooldown = Math.max(enemy.hitCooldown || 0, 0.35);
+    state?.onEnemyEmpStopped?.(enemy);
+    return true;
+  }
+
   class Projectile {
     constructor(x, y, dir, range, damage) {
       this.x = x;
@@ -1621,7 +1655,7 @@
       for (const enemy of state.enemies) {
         if (enemy.dead || enemy.isDead()) continue;
         if (dist(this.x, this.y, enemy.x, enemy.y) < this.radius + enemy.radius) {
-          enemy.damage(this.damage, state);
+          applyEmpToEnemy(enemy, state.getEmpStopDuration(), state);
           state.onPulseHitEnemy(enemy, this.x, this.y);
           this.dead = true;
           break;
@@ -1651,6 +1685,7 @@
     update(dt, state) {
       this.life -= dt;
       this.hitCooldown = Math.max(0, this.hitCooldown - dt);
+      if (tickEmpStop(this, dt)) return;
       const dx = state.player.x - this.x;
       const dy = state.player.y - this.y;
       const len = Math.hypot(dx, dy) || 1;
@@ -1667,13 +1702,7 @@
 
     damage(amount, state) {
       if (this.dead) return;
-      this.hp -= amount;
-      if (this.hp <= 0) {
-        this.dead = true;
-        this.disabled = true;
-        state.onEnemyDisabled();
-        state.pushMessage("追跡妨害機を無力化");
-      }
+      applyEmpToEnemy(this, state.getEmpStopDuration(), state);
     }
 
     isDead() {
@@ -1698,6 +1727,7 @@
 
     update(dt, state) {
       this.life -= dt;
+      if (tickEmpStop(this, dt)) return;
       this.drift += dt * 0.8;
       this.x = clamp(this.x + Math.cos(this.drift) * 18 * dt, this.radius, CONFIG.MAP_W - this.radius);
       this.y = clamp(this.y + Math.sin(this.drift * 0.7) * 18 * dt, this.radius, CONFIG.MAP_H - this.radius);
@@ -1711,13 +1741,7 @@
 
     damage(amount, state) {
       if (this.dead) return;
-      this.hp -= amount;
-      if (this.hp <= 0) {
-        this.dead = true;
-        this.disabled = true;
-        state.onEnemyDisabled();
-        state.pushMessage("ジャマーを無力化");
-      }
+      applyEmpToEnemy(this, state.getEmpStopDuration(), state);
     }
 
     isDead() {
@@ -1743,6 +1767,7 @@
     update(dt, state) {
       this.life -= dt;
       this.hitCooldown = Math.max(0, this.hitCooldown - dt);
+      if (tickEmpStop(this, dt)) return;
       const target = state.liftProgress?.signal || (state.protectedSurvivors.length > 0 ? state.player : this.targetSignal) || state.player;
       const dx = target.x - this.x;
       const dy = target.y - this.y;
@@ -1764,13 +1789,7 @@
 
     damage(amount, state) {
       if (this.dead) return;
-      this.hp -= amount;
-      if (this.hp <= 0) {
-        this.dead = true;
-        this.disabled = true;
-        state.onEnemyDisabled();
-        state.pushMessage("回収妨害機を無力化");
-      }
+      applyEmpToEnemy(this, state.getEmpStopDuration(), state);
     }
 
     isDead() {
@@ -1810,6 +1829,7 @@
     update(dt, state) {
       this.life -= dt;
       this.hitCooldown = Math.max(0, this.hitCooldown - dt);
+      if (tickEmpStop(this, dt)) return;
       const playerDistance = dist(this.x, this.y, state.player.x, state.player.y);
 
       if (this.dashTimer > 0) {
@@ -1847,13 +1867,7 @@
 
     damage(amount, state) {
       if (this.dead) return;
-      this.hp -= amount;
-      if (this.hp <= 0) {
-        this.dead = true;
-        this.disabled = true;
-        state.onEnemyDisabled();
-        state.pushMessage("警備ドローンを無力化");
-      }
+      applyEmpToEnemy(this, state.getEmpStopDuration(), state);
     }
 
     isDead() {
@@ -1879,6 +1893,7 @@
     update(dt, state) {
       this.life -= dt;
       this.hitCooldown = Math.max(0, this.hitCooldown - dt);
+      if (tickEmpStop(this, dt)) return;
       const dx = state.player.x - this.x;
       const dy = state.player.y - this.y;
       const len = Math.hypot(dx, dy) || 1;
@@ -1906,13 +1921,7 @@
 
     damage(amount, state) {
       if (this.dead) return;
-      this.hp -= amount;
-      if (this.hp <= 0) {
-        this.dead = true;
-        this.disabled = true;
-        state.onEnemyDisabled();
-        state.pushMessage("カーゴハッカーを無力化");
-      }
+      applyEmpToEnemy(this, state.getEmpStopDuration(), state);
     }
 
     isDead() {
@@ -2007,7 +2016,6 @@
       this.protectedSurvivorSpeedBonus = 0;
       this.pulseSkillCooldownReduction = 0;
       this.pulseExplosionRadius = 0;
-      this.pulseExplosionDamage = 0;
       this.over = false;
       this.buildings = [];
       this.roads = [];
@@ -2053,18 +2061,18 @@
       const columnW = CONFIG.MAP_W / 6;
       const rowH = CONFIG.MAP_H / 8;
       const theme = this.stageTheme || STAGE_THEMES.central;
-      const roadW = theme.roadWidth || 84;
+      const roadW = snapTileSize(theme.roadWidth || 84, CONFIG.TILE_SIZE * 2);
       const axis = theme.roadEmphasis === "axis" ? pick(["vertical", "horizontal"]) : null;
 
       for (let x = 0; x <= CONFIG.MAP_W; x += columnW) {
         const major = axis === "vertical" && Math.abs(x - CONFIG.MAP_W / 2) < columnW;
-        const width = major ? roadW + 32 : roadW;
-        this.roads.push({ x: x - width / 2, y: 0, w: width, h: CONFIG.MAP_H, vertical: true, major });
+        const width = snapTileSize(major ? roadW + CONFIG.TILE_SIZE : roadW, CONFIG.TILE_SIZE * 2);
+        this.roads.push(snapRectToTile({ x: x - width / 2, y: 0, w: width, h: CONFIG.MAP_H, vertical: true, major }, { keepSize: true }));
       }
       for (let y = 0; y <= CONFIG.MAP_H; y += rowH) {
         const major = axis === "horizontal" && Math.abs(y - CONFIG.MAP_H / 2) < rowH;
-        const height = major ? roadW + 32 : roadW;
-        this.roads.push({ x: 0, y: y - height / 2, w: CONFIG.MAP_W, h: height, vertical: false, major });
+        const height = snapTileSize(major ? roadW + CONFIG.TILE_SIZE : roadW, CONFIG.TILE_SIZE * 2);
+        this.roads.push(snapRectToTile({ x: 0, y: y - height / 2, w: CONFIG.MAP_W, h: height, vertical: false, major }, { keepSize: true }));
       }
 
       for (let col = 0; col < 6; col += 1) {
@@ -2075,14 +2083,15 @@
           if (dist(cx, cy, this.returnPoint.x, this.returnPoint.y) < 260) continue;
           const maxW = Math.max(theme.buildingWidth[0] + 16, columnW * theme.buildingWidth[1]);
           const maxH = Math.max(theme.buildingHeight[0] + 16, rowH * theme.buildingHeight[1]);
-          const w = rand(theme.buildingWidth[0], maxW);
-          const h = rand(theme.buildingHeight[0], maxH);
-          const rect = {
+          const w = snapTileSize(rand(theme.buildingWidth[0], maxW), CONFIG.TILE_SIZE * 2);
+          const h = snapTileSize(rand(theme.buildingHeight[0], maxH), CONFIG.TILE_SIZE * 2);
+          const rect = snapRectToTile({
             x: clamp(cx - w / 2, 55, CONFIG.MAP_W - w - 55),
             y: clamp(cy - h / 2, 55, CONFIG.MAP_H - h - 55),
             w,
-            h
-          };
+            h,
+            tileKey: "building"
+          });
           if (!circleRect(this.returnPoint.x, this.returnPoint.y, 120, rect)) {
             this.buildings.push(rect);
           }
@@ -2277,7 +2286,7 @@
       this.enemies.push(unit);
       this.runLog.enemiesSpawned += 1;
       if (this.tutorialActive && this.tutorialStep < 3) this.tutorialStep = 3;
-      this.showTutorialStep(3, "妨害ユニットはパルスで無力化できる");
+      this.showTutorialStep(3, "妨害ユニットはEMPで一時停止できる");
       if (options.message !== false) {
         const messages = {
           chaser: "追跡妨害機を検知",
@@ -2771,12 +2780,16 @@
       this.attackEffects = this.attackEffects.filter(effect => effect.ttl > 0);
     }
 
-    hitEnemiesInRadius(x, y, radius, damage) {
+    getEmpStopDuration() {
+      return CONFIG.EMP_STOP_DURATION * this.player.empDurationBonus;
+    }
+
+    empEnemiesInRadius(x, y, radius, duration = this.getEmpStopDuration()) {
       let hit = 0;
       for (const enemy of this.enemies) {
         if (enemy.dead || enemy.isDead()) continue;
         if (dist(x, y, enemy.x, enemy.y) <= radius + enemy.radius) {
-          enemy.damage(damage, this);
+          applyEmpToEnemy(enemy, duration, this);
           this.onPulseHitEnemy(enemy, enemy.x, enemy.y);
           hit += 1;
         }
@@ -2784,7 +2797,7 @@
       return hit;
     }
 
-    hitEnemiesInCone(x, y, dir, range, angle, damage) {
+    empEnemiesInCone(x, y, dir, range, angle, duration = this.getEmpStopDuration()) {
       let hit = 0;
       for (const enemy of this.enemies) {
         if (enemy.dead || enemy.isDead()) continue;
@@ -2794,12 +2807,20 @@
         if (len > range + enemy.radius) continue;
         const dot = (dx / len) * dir.x + (dy / len) * dir.y;
         if (dot >= Math.cos(angle)) {
-          enemy.damage(damage, this);
+          applyEmpToEnemy(enemy, duration, this);
           this.onPulseHitEnemy(enemy, enemy.x, enemy.y);
           hit += 1;
         }
       }
       return hit;
+    }
+
+    hitEnemiesInRadius(x, y, radius, damage) {
+      return this.empEnemiesInRadius(x, y, radius);
+    }
+
+    hitEnemiesInCone(x, y, dir, range, angle, damage) {
+      return this.empEnemiesInCone(x, y, dir, range, angle);
     }
 
     onPulseHitEnemy(primaryEnemy, x, y) {
@@ -2811,12 +2832,12 @@
       for (const enemy of this.enemies) {
         if (enemy === primaryEnemy || enemy.dead || enemy.isDead()) continue;
         if (dist(x, y, enemy.x, enemy.y) <= this.pulseExplosionRadius + enemy.radius) {
-          enemy.damage(this.pulseExplosionDamage, this);
+          applyEmpToEnemy(enemy, this.getEmpStopDuration() * 0.65, this);
           splashHits += 1;
         }
       }
       this.attackEffects.push({ type: "ring", x, y, radius: this.pulseExplosionRadius, ttl: 0.16, color: "#ff8fd8" });
-      if (splashHits > 0) this.pushPrompt(`パルス爆裂 ${splashHits}機巻込`);
+      if (splashHits > 0) this.pushPrompt(`EMP連鎖 ${splashHits}機停止`);
     }
 
     getNearestSurvivorSignal() {
@@ -2851,7 +2872,7 @@
     }
 
     isJammedByUnit() {
-      return this.enemies.some(enemy => enemy.type === "jammer" && !enemy.dead && dist(enemy.x, enemy.y, this.player.x, this.player.y) < enemy.effectRadius);
+      return this.enemies.some(enemy => enemy.type === "jammer" && !enemy.dead && !isEmpStopped(enemy) && dist(enemy.x, enemy.y, this.player.x, this.player.y) < enemy.effectRadius);
     }
 
     getMarkerAlpha() {
@@ -2887,12 +2908,17 @@
       );
     }
 
-    onEnemyDisabled() {
+    onEnemyEmpStopped() {
       this.runLog.enemiesDisabled += 1;
+      this.runLog.empStops += 1;
       if (this.player.disableBoostMultiplier > 1) {
         this.player.disableBoostTimer = Math.max(this.player.disableBoostTimer, 3);
-        this.pushPrompt("撃破加速");
+        this.pushPrompt("EMP離脱加速");
       }
+    }
+
+    onEnemyDisabled() {
+      this.onEnemyEmpStopped();
     }
 
     onPlayerDamaged(amount) {
@@ -3526,6 +3552,8 @@
       enemiesSpawned: 0,
       enemiesDisabled: 0,
       pulseUsed: 0,
+      empUsed: 0,
+      empStops: 0,
       skillUsed: 0,
       hazardEntries: 0,
       supplyCollected: 0,
@@ -3818,9 +3846,9 @@
       .replace("3秒間、", "")
       .replace("移動速度が大きく上がる", "高速移動")
       .replace("危険区域の影響を大きく抑える", "危険軽減")
-      .replace("周囲の妨害機を押し返す近距離パルス", "周囲を押し返す")
-      .replace("前方へ到達距離の長いパルス弾を放つ", "長距離弾")
-      .replace("前方の妨害機を短い到達距離でまとめて弾く", "前方短射程");
+      .replace("周囲の妨害ユニットを数秒間停止させる広域EMP", "周囲EMP停止")
+      .replace("前方長距離の妨害ユニットを数秒間停止させる", "長距離EMP停止")
+      .replace("前方範囲の妨害ユニットを数秒間停止させる", "前方EMP停止");
   }
 
   function updateVehicleSortieBar() {
@@ -4011,8 +4039,8 @@
     const list = [
       `最大HP +${(facility.garage || 0) * 8 + effects.maxHpBonus}`,
       `配達報酬 +${Math.round((facility.depot || 0) * 5 + effects.rewardBonus * 100)}%`,
-      `パルス出力 +${(facility.control || 0) * 15}%`,
-      `パルス到達距離 +${(facility.control || 0) * 12}%`,
+      `EMP停止時間 +${(facility.control || 0) * 8}%`,
+      `EMP効果範囲 +${(facility.control || 0) * 12}%`,
       `修理回復 +${(facility.medical || 0) * 8 + effects.repairBonus}`,
       `通信障害 -${((facility.comms || 0) * 1.2 + effects.commsReduction).toFixed(1)}秒`,
       `上位型出現率 ${getUpperTierBonusText(save)}`,
@@ -4336,6 +4364,7 @@
     canvas.width = Math.floor(width * dpr);
     canvas.height = Math.floor(height * dpr);
     helpCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    helpCtx.imageSmoothingEnabled = false;
 
     const sx = width / 720;
     const sy = height / 420;
@@ -4958,7 +4987,7 @@
     if ((log.survivorsProtected || 0) >= 1) return { title: "救助優先ルート", text: "生存者回収を軸にしたランでした。保護後は早めの帰還判断が人員加入を安定させます。" };
     if ((log.stationUses || 0) >= 3) return { title: "強化ステーション常連", text: "ステーションを積極的に使えています。修理と改造の選択がラン後半の安定につながります。" };
     if ((log.hazardEntries || 0) >= 5) return { title: "危険区域突破型", text: "危険区域を強引に抜ける場面が多いランでした。危険突破型の強化を取ると近道として使いやすくなります。" };
-    if ((log.enemiesDisabled || 0) >= 4) return { title: "妨害機掃討型", text: "妨害ユニットを処理してルートを作れています。パルス強化や冷却還流と相性が良いです。" };
+    if ((log.empStops || log.enemiesDisabled || 0) >= 4) return { title: "EMP退避型", text: "妨害ユニットを止めて配送ルートを作れています。EMP範囲や冷却還流と相性が良いです。" };
     if (result?.returned && log.returnSecondsLeft != null && log.returnSecondsLeft <= 15) return { title: "ギリギリ帰還", text: "最後まで欲張ったランです。次回は残り60秒の時点で帰還ルートを意識すると安定します。" };
     if ((log.deliveries || 0) === 0) return { title: "空荷帰還", text: "配達より生存や偵察を優先したランです。近距離の通常荷物から始めると安定して資材を稼げます。" };
     if ((log.deliveries || 0) >= 7) return { title: "灰街最速便", text: "配達テンポが高いランでした。報酬交渉術や連続配送系の強化でさらに伸ばせます。" };
@@ -5032,8 +5061,8 @@
           <span>獲得資材: ${log.material}</span>
           <span>危険イベント: ${log.eventsTotal}回</span>
           <span>妨害出現: ${log.enemiesSpawned}体</span>
-          <span>無力化: ${log.enemiesDisabled}体</span>
-          <span>パルス使用: ${log.pulseUsed}回</span>
+          <span>EMP停止: ${log.empStops || log.enemiesDisabled}体</span>
+          <span>EMP使用: ${log.empUsed || log.pulseUsed}回</span>
           <span>スキル使用: ${log.skillUsed}回</span>
           <span>生存者保護: ${log.survivorsProtected}名</span>
           <span>支援物資: ${log.supplyCollected}回</span>
@@ -5074,7 +5103,7 @@
     if (log.eventsTotal >= 9) return "危険イベントが多めでした。イベント間隔を少し長くすると遊びやすくなります。";
     if ((log.bossEvents || 0) > 0 && (log.bossHits || 0) === 0) return "巨大監視ドローンを回避できました。警告ラインが出た時はルート変更が有効です。";
     if (log.survivorsProtected > 0 && log.survivorsJoined === 0) return "生存者を保護できました。次は帰還を優先すると人員加入が安定します。";
-    if (log.enemiesSpawned > 0 && log.pulseUsed <= 1) return "パルス使用が少なめです。妨害ユニットは無力化も選択肢です。";
+    if (log.enemiesSpawned > 0 && (log.empUsed || log.pulseUsed || 0) <= 1) return "EMP使用が少なめです。包囲された時やリフト回収前の一時停止に温存して使うと安定します。";
     if (log.returnSecondsLeft != null && log.returnSecondsLeft < 15) return "帰還残り時間が少なめです。残り60秒時点で帰還ルートを意識しましょう。";
     if (log.damageTaken >= 55) return "損傷が多めです。危険区域損傷を下げる調整も検討できます。";
     return "今回のログを見ながら、イベント間隔や報酬倍率を少しずつ試せます。";
@@ -5115,6 +5144,7 @@
       : String(state.deliveries);
     dom.hudHp.textContent = `${Math.ceil(player.hp)}/${player.maxHp}`;
     dom.hudCargo.textContent = state.runMode === "bonus" ? `資材${state.bonusMaterials}` : `${usedCapacity}/${player.capacity}`;
+    dom.hudEmp.textContent = formatEmpCharges(player);
     dom.hudAreaStatus.textContent = getAreaStatusHudLabel(state);
 
     const panelLines = [];
@@ -5167,13 +5197,23 @@
     updateActionButtons(state, player);
   }
 
+  function formatEmpCharges(player) {
+    const full = "●".repeat(Math.max(0, player.empCharges));
+    const empty = "○".repeat(Math.max(0, player.empMaxCharges - player.empCharges));
+    return `${full}${empty}`;
+  }
+
   function updateActionButtons(state, player) {
     const skill = player.vehicle;
-    if (player.attackCooldown > 0) {
-      dom.attackButton.textContent = `${skill.attackName} ${player.attackCooldown.toFixed(1)}秒`;
+    const empText = `EMP ${formatEmpCharges(player)}`;
+    if (player.empCharges <= 0) {
+      dom.attackButton.textContent = "EMP なし";
+      dom.attackButton.disabled = true;
+    } else if (player.attackCooldown > 0) {
+      dom.attackButton.textContent = `${empText} ${player.attackCooldown.toFixed(1)}秒`;
       dom.attackButton.disabled = true;
     } else {
-      dom.attackButton.textContent = skill.attackName || "パルス";
+      dom.attackButton.textContent = empText;
       dom.attackButton.disabled = false;
     }
 
@@ -5214,6 +5254,7 @@
     dom.canvas.style.width = `${width}px`;
     dom.canvas.style.height = `${height}px`;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.imageSmoothingEnabled = false;
     if (app.state) app.state.updateCamera();
   }
 
@@ -5253,33 +5294,34 @@
 
   function drawMap(state) {
     const colors = state.stageTheme?.colors || STAGE_THEMES.central.colors;
-    ctx.fillStyle = colors.ground;
-    ctx.fillRect(0, 0, CONFIG.MAP_W, CONFIG.MAP_H);
+    if (!drawTiledRect("tiles.ground", 0, 0, CONFIG.MAP_W, CONFIG.MAP_H, colors.ground)) {
+      ctx.fillStyle = colors.ground;
+      ctx.fillRect(0, 0, CONFIG.MAP_W, CONFIG.MAP_H);
+    }
 
     for (const road of state.roads) {
-      ctx.fillStyle = road.major ? blendHex(colors.roadAlt, "#ffffff", 0.1) : (road.vertical ? colors.road : colors.roadAlt);
-      ctx.fillRect(road.x, road.y, road.w, road.h);
-      ctx.strokeStyle = road.major ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.04)";
-      ctx.lineWidth = road.major ? 3 : 2;
-      if (road.vertical) {
-        ctx.beginPath();
-        ctx.moveTo(road.x + road.w / 2, road.y);
-        ctx.lineTo(road.x + road.w / 2, road.y + road.h);
-        ctx.stroke();
-      } else {
-        ctx.beginPath();
-        ctx.moveTo(road.x, road.y + road.h / 2);
-        ctx.lineTo(road.x + road.w, road.y + road.h / 2);
-        ctx.stroke();
+      const roadColor = road.major ? blendHex(colors.roadAlt, "#ffffff", 0.1) : (road.vertical ? colors.road : colors.roadAlt);
+      const roadTile = road.major || !road.vertical ? "tiles.roadAlt" : "tiles.road";
+      const usedTile = drawTiledRect(roadTile, road.x, road.y, road.w, road.h, roadColor);
+      if (!usedTile) {
+        ctx.strokeStyle = road.major ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.04)";
+        ctx.lineWidth = road.major ? 3 : 2;
+        if (road.vertical) {
+          ctx.beginPath();
+          ctx.moveTo(road.x + road.w / 2, road.y);
+          ctx.lineTo(road.x + road.w / 2, road.y + road.h);
+          ctx.stroke();
+        } else {
+          ctx.beginPath();
+          ctx.moveTo(road.x, road.y + road.h / 2);
+          ctx.lineTo(road.x + road.w, road.y + road.h / 2);
+          ctx.stroke();
+        }
       }
     }
 
     for (const building of state.buildings) {
-      ctx.fillStyle = colors.building;
-      ctx.fillRect(building.x, building.y, building.w, building.h);
-      ctx.strokeStyle = colors.buildingStroke;
-      ctx.lineWidth = 3;
-      ctx.strokeRect(building.x + 1, building.y + 1, building.w - 2, building.h - 2);
+      drawBuildingTileRect(building, colors);
     }
   }
 
@@ -5347,6 +5389,11 @@
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.translate(point.x, point.y);
+    if (drawGraphicSprite("sprites.return_point", 0, 0, 40, 40)) {
+      drawLabel("帰還", 0, -34, warning ? "#80b8ff" : "#65a7ff");
+      ctx.restore();
+      return;
+    }
     ctx.strokeStyle = warning ? "#80b8ff" : "rgba(101,167,255,0.55)";
     ctx.lineWidth = warning ? 6 : 4;
     ctx.beginPath();
@@ -5424,6 +5471,10 @@
     ctx.beginPath();
     ctx.arc(0, 0, drop.radius + pulse, 0, Math.PI * 2);
     ctx.fill();
+    if (drawGraphicSprite("sprites.supply_drop", 0, 0, 32, 32)) {
+      ctx.restore();
+      return;
+    }
     ctx.strokeStyle = "#a8f2ff";
     ctx.lineWidth = 3;
     ctx.strokeRect(-16, -16, 32, 32);
@@ -5441,6 +5492,10 @@
     ctx.beginPath();
     ctx.arc(0, 0, box.radius + 8 + pulse, 0, Math.PI * 2);
     ctx.fill();
+    if (drawGraphicSprite("sprites.material_box", 0, 0, 32, 32)) {
+      ctx.restore();
+      return;
+    }
     ctx.fillStyle = "#74d6ff";
     ctx.strokeStyle = "#12313a";
     ctx.lineWidth = 3;
@@ -5463,6 +5518,11 @@
     ctx.beginPath();
     ctx.arc(0, 0, signal.radius + pulse, 0, Math.PI * 2);
     ctx.fill();
+    if (drawGraphicSprite("sprites.survivor_signal", 0, 0, 32, 32)) {
+      drawLabel("生存者信号", 0, -38, "#ff8fd8");
+      ctx.restore();
+      return;
+    }
     ctx.strokeStyle = "#ff8fd8";
     ctx.lineWidth = 4;
     ctx.beginPath();
@@ -5540,6 +5600,11 @@
     ctx.beginPath();
     ctx.arc(0, 0, 38 + pulse, 0, Math.PI * 2);
     ctx.fill();
+    if (drawGraphicSprite("sprites.upgrade_station", 0, 0, 32, 32, { alpha: ready ? 1 : 0.62 })) {
+      drawLabel(ready ? "強化ステーション" : "再起動中", 0, -44, ready ? "#bf7cff" : "#9b8eb0");
+      ctx.restore();
+      return;
+    }
     ctx.fillStyle = ready ? "rgba(191,124,255,0.3)" : "rgba(90,76,108,0.3)";
     ctx.beginPath();
     for (let i = 0; i < 6; i += 1) {
@@ -5568,6 +5633,11 @@
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.translate(p.x, p.y);
+    if (drawGraphicSprite(`sprites.pickup_${job.type.key}`, 0, 0, 32, 32)) {
+      drawLabel(job.type.name, 0, -32, job.type.color);
+      ctx.restore();
+      return;
+    }
     ctx.fillStyle = job.type.color;
     ctx.beginPath();
     ctx.moveTo(0, -22 - ttlPulse);
@@ -5592,6 +5662,11 @@
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.translate(p.x, p.y);
+    if (drawGraphicSprite("sprites.destination", 0, 0, 32, 32)) {
+      drawLabel(job.type.name, 0, -34, "#6ee28d");
+      ctx.restore();
+      return;
+    }
     ctx.fillStyle = "rgba(110,226,141,0.22)";
     ctx.beginPath();
     ctx.arc(0, 0, 34, 0, Math.PI * 2);
@@ -5610,6 +5685,10 @@
   function drawProjectile(projectile) {
     ctx.save();
     ctx.translate(projectile.x, projectile.y);
+    if (drawGraphicSprite("sprites.projectile", 0, 0, 16, 16)) {
+      ctx.restore();
+      return;
+    }
     ctx.fillStyle = "#b5fbff";
     ctx.beginPath();
     ctx.arc(0, 0, projectile.radius, 0, Math.PI * 2);
@@ -5688,6 +5767,11 @@
     ctx.beginPath();
     ctx.arc(0, 0, 96, 0, Math.PI * 2);
     ctx.stroke();
+    if (drawGraphicSprite("sprites.boss_watcher", 0, 0, 72, 72)) {
+      drawLabel("巨大監視", 0, -58, "#ff6f70");
+      ctx.restore();
+      return;
+    }
     ctx.fillStyle = "#321014";
     ctx.strokeStyle = "#ff6f70";
     ctx.lineWidth = 4;
@@ -5717,9 +5801,10 @@
   function drawInterferenceUnit(enemy) {
     ctx.save();
     ctx.translate(enemy.x, enemy.y);
+    const stopped = isEmpStopped(enemy);
     const wobble = Math.sin(performance.now() / 170) * 0.22;
 
-    if (enemy.type === "jammer") {
+    if (enemy.type === "jammer" && !stopped) {
       ctx.fillStyle = "rgba(190, 80, 255, 0.12)";
       ctx.beginPath();
       ctx.arc(0, 0, enemy.effectRadius, 0, Math.PI * 2);
@@ -5733,7 +5818,7 @@
       ctx.setLineDash([]);
     }
 
-    if (enemy.type === "patrol") {
+    if (enemy.type === "patrol" && !stopped) {
       const alert = enemy.alertTimer > 0;
       ctx.fillStyle = alert ? "rgba(255, 218, 92, 0.12)" : "rgba(255, 180, 76, 0.08)";
       ctx.beginPath();
@@ -5746,7 +5831,26 @@
       ctx.stroke();
     }
 
+    if (stopped) {
+      const pulse = 3 + Math.sin(performance.now() / 95) * 2;
+      ctx.fillStyle = "rgba(158, 231, 255, 0.16)";
+      ctx.beginPath();
+      ctx.arc(0, 0, enemy.radius + 12 + pulse, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(158, 231, 255, 0.82)";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(0, 0, enemy.radius + 12, 0, Math.PI * 2);
+      ctx.stroke();
+      drawLabel(`EMP ${Math.ceil(enemy.empTimer)}`, 0, -32, "#9ee7ff");
+    }
+
     ctx.rotate(wobble);
+    if (stopped) ctx.globalAlpha *= 0.56;
+    if (drawGraphicSprite(`sprites.enemy_${enemy.type}`, 0, 0, 32, 32)) {
+      ctx.restore();
+      return;
+    }
     const styles = {
       chaser: { fill: "#ff6f70", stroke: "#461316", label: "追" },
       jammer: { fill: "#be6dff", stroke: "#32124c", label: "妨" },
@@ -5794,6 +5898,11 @@
     ctx.translate(player.x, player.y);
     const angle = Math.atan2(player.facing.y, player.facing.x);
     ctx.rotate(angle + Math.PI / 2);
+
+    if (drawGraphicSprite(`sprites.player_${player.vehicleId}`, 0, 0, 48, 48)) {
+      ctx.restore();
+      return;
+    }
 
     const activeColor = player.skillActive > 0 ? "#b5fbff" : "#48d6ee";
     const body = player.vehicleId === "beta"
@@ -6326,6 +6435,126 @@
   function getHighestUpgradeTierText(log) {
     const tier = log?.highestUpgradeTier || 0;
     return tier > 0 ? UPGRADE_TIER_LABELS[tier] : "なし";
+  }
+
+  function createGraphicsSystem(rawManifest) {
+    const manifest = rawManifest && typeof rawManifest === "object" ? rawManifest : {};
+    const system = {
+      enabled: Boolean(manifest.enabled),
+      tileSize: Math.max(8, Number(manifest.tileSize) || CONFIG.TILE_SIZE),
+      images: new Map()
+    };
+    if (!system.enabled) return system;
+
+    const basePath = typeof manifest.basePath === "string" ? manifest.basePath : "";
+    for (const section of ["tiles", "sprites"]) {
+      const entries = manifest[section] && typeof manifest[section] === "object" ? manifest[section] : {};
+      for (const [name, value] of Object.entries(entries)) {
+        const src = typeof value === "string" ? value : value?.src;
+        if (!src) continue;
+        const image = new Image();
+        image.decoding = "async";
+        image.src = normalizeGraphicPath(basePath, src);
+        system.images.set(`${section}.${name}`, image);
+      }
+    }
+    return system;
+  }
+
+  function normalizeGraphicPath(basePath, src) {
+    if (/^(data:|https?:\/\/|\/)/i.test(src)) return src;
+    const base = basePath ? `${basePath.replace(/\/?$/, "/")}` : "";
+    return `${base}${String(src).replace(/^\//, "")}`;
+  }
+
+  function getGraphicImage(key) {
+    if (!graphics.enabled) return null;
+    const image = graphics.images.get(key);
+    return image && image.complete && image.naturalWidth > 0 ? image : null;
+  }
+
+  function drawGraphicSprite(key, x, y, width = CONFIG.TILE_SIZE, height = CONFIG.TILE_SIZE, options = {}) {
+    const image = getGraphicImage(key);
+    if (!image) return false;
+    ctx.save();
+    ctx.translate(x, y);
+    if (options.rotation) ctx.rotate(options.rotation);
+    if (options.alpha != null) ctx.globalAlpha *= options.alpha;
+    ctx.drawImage(image, -width / 2, -height / 2, width, height);
+    ctx.restore();
+    return true;
+  }
+
+  function drawTiledRect(key, x, y, width, height, fallbackColor) {
+    const image = getGraphicImage(key);
+    if (!image) {
+      ctx.fillStyle = fallbackColor;
+      ctx.fillRect(x, y, width, height);
+      return false;
+    }
+    const tileSize = graphics.tileSize || CONFIG.TILE_SIZE;
+    const startX = Math.floor(x / tileSize) * tileSize;
+    const startY = Math.floor(y / tileSize) * tileSize;
+    const endX = x + width;
+    const endY = y + height;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x, y, width, height);
+    ctx.clip();
+    for (let yy = startY; yy < endY; yy += tileSize) {
+      for (let xx = startX; xx < endX; xx += tileSize) {
+        ctx.drawImage(image, xx, yy, tileSize, tileSize);
+      }
+    }
+    ctx.restore();
+    return true;
+  }
+
+  function drawBuildingTileRect(building, colors) {
+    const usedTile = drawTiledRect(`tiles.${building.tileKey || "building"}`, building.x, building.y, building.w, building.h, colors.building);
+    const edgeImage = getGraphicImage("tiles.buildingEdge");
+    if (usedTile && edgeImage) {
+      const tileSize = graphics.tileSize || CONFIG.TILE_SIZE;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(building.x, building.y, building.w, building.h);
+      ctx.clip();
+      for (let x = building.x; x < building.x + building.w; x += tileSize) {
+        ctx.drawImage(edgeImage, x, building.y, tileSize, tileSize);
+        ctx.drawImage(edgeImage, x, building.y + building.h - tileSize, tileSize, tileSize);
+      }
+      for (let y = building.y + tileSize; y < building.y + building.h - tileSize; y += tileSize) {
+        ctx.drawImage(edgeImage, building.x, y, tileSize, tileSize);
+        ctx.drawImage(edgeImage, building.x + building.w - tileSize, y, tileSize, tileSize);
+      }
+      ctx.restore();
+      return;
+    }
+    if (!usedTile) {
+      ctx.strokeStyle = colors.buildingStroke;
+      ctx.lineWidth = 3;
+      ctx.strokeRect(building.x + 1, building.y + 1, building.w - 2, building.h - 2);
+    }
+  }
+
+  function snapToTile(value) {
+    return Math.round(value / CONFIG.TILE_SIZE) * CONFIG.TILE_SIZE;
+  }
+
+  function snapTileSize(value, minSize = CONFIG.TILE_SIZE) {
+    return Math.max(minSize, Math.round(value / CONFIG.TILE_SIZE) * CONFIG.TILE_SIZE);
+  }
+
+  function snapRectToTile(rect, options = {}) {
+    const width = options.keepSize ? rect.w : snapTileSize(rect.w, CONFIG.TILE_SIZE);
+    const height = options.keepSize ? rect.h : snapTileSize(rect.h, CONFIG.TILE_SIZE);
+    return {
+      ...rect,
+      x: clamp(snapToTile(rect.x), 0, Math.max(0, CONFIG.MAP_W - width)),
+      y: clamp(snapToTile(rect.y), 0, Math.max(0, CONFIG.MAP_H - height)),
+      w: width,
+      h: height
+    };
   }
 
   function dist(ax, ay, bx, by) {

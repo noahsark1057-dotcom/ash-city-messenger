@@ -787,7 +787,7 @@ h2 {
 
 .hud {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 1px;
   padding-top: env(safe-area-inset-top);
   background: #07090b;
